@@ -1,4 +1,5 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 # Best to [re]build vmtouch for this distro. It is not in
 # the core OS.
@@ -25,20 +26,37 @@ fi
 NUM="$1"
 DEST="$2"
 
+# Does pv support bits as a UOM on this platform?
+if pv --help 2>&1 | grep -q -- '-8'; then
+  export PV_FLAGS="-ra8tpe -i 1"
+else
+  export PV_FLAGS="-rabtpe -i 1"
+fi
+
 # Create new files of random data.
 /usr/bin/time -v python ./randomfiles.py -n "$NUM"
+
+# Try blowing out the cache entirely. Doesn't hurt to try, yes?
+sudo echo 1 > /proc/sys/vm/drop_caches || true
 
 # Load them into cache
 find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -t
 # find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch
 
-
-
 # Stats.
-find . -type f -name '*.iotest' -print0 \
-    | sort -z \
-    | xargs -0 pv -ra8tpe -i 1 \
-    | ssh -T -o BatchMode=yes "$2" "cat > /dev/null"
+/usr/bin/time -v bash -o pipefail -c '
+  find . -type f -name "*.iotest" -print0 \
+  | xargs -0 pv '"$PV_FLAGS" ' \
+  | ssh -T ' "$DEST" ' "cat > /dev/null" '
+
+# remove the files from cache
+find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -e
+
+# rerun, same files.
+/usr/bin/time -v bash -o pipefail -c '
+  find . -type f -name "*.iotest" -print0 \
+  | xargs -0 pv '"$PV_FLAGS" ' \
+  | ssh -T ' "$DEST" ' "cat > /dev/null" '
 
 
 rm -fr *.iotest
