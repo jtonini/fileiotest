@@ -91,7 +91,7 @@ def randomfiles_main(num:int) -> int:
         name, size = random_file('randfile', length=10000000)
         files[name] = size
 
-    print(files)
+    # print(files)
 
     return os.EX_OK
 

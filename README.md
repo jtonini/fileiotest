@@ -8,9 +8,9 @@ Here is an explanation of what this thing does.
 
 [2] Checks to see if `pv` is present. If not, it installs it.
 
-[3] Creates `numfiles` of 10MB of random data. 
+[3] Creates `numfiles` of 10MB of random data.
 
-[4] Forces them to be read into memory with `vmtouch`. Given that they have just been created, they might be 
+[4] Forces them to be read into memory with `vmtouch`. Given that they have just been created, they might be
 memory resident already. The second line in the script that runs `vmtouch` just checks to see that they
 are really there. Uncomment to diagnose problems.
 
@@ -27,4 +27,10 @@ are really there. Uncomment to diagnose problems.
 - `ssh -T` don't create a login session at the other end
 - `BatchMode=yes` "get in; get out"
 
-[6] Clean up the test files.
+[6] Unload the cache, and repeat step 5.
+
+[7] Unload the cache, and repeat step 5 and *write* the destination files.
+
+[8] Remove the file on the destination machine.
+
+[9] Remove the test files.
