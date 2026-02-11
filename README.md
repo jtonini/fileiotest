@@ -2,35 +2,21 @@
 
 Here is an explanation of what this thing does.
 
-`./fileiotest.sh {numfiles} {user@ip.ad.dre.ss}`
+```bash
+./fileiotest.sh {numfiles} {user@ip.ad.dre.ss} {reportfile}
+```
 
-[1] Checks to see if `vmtouch` is present. If not, it builds it.
+[1] Checks for requirements: 
+  - `pv` and `vmtouch` must be present. Prints a message suggesting the location of `vmtouch` if it is not found.
+  - Tries `python3` then `python3.9`. If neither works, it tells you it cannot run.
 
-[2] Checks to see if `pv` is present. If not, it installs it.
+[2] Removes `reportfile` if it exists (using `unlink` in case `rm` is aliased)
 
 [3] Creates `numfiles` of 10MB of random data.
 
-[4] Forces them to be read into memory with `vmtouch`. Given that they have just been created, they might be
-memory resident already. The second line in the script that runs `vmtouch` just checks to see that they
-are really there. Uncomment to diagnose problems.
+[4] Transfers the files five times.
+  - send files from local disk to `/dev/null` on the remote machine.
+  - send files from local memory to `/dev/null` three times, with waits of 60 seconds between.
+  - send files from local memory to a queued write on the remote machine.
 
-[5] Transfer across the wire. `pv` monitors the pipe, and prints stats. Some notes on all those options:
-
-- `find` is used in case there are more files that match `*.iotest` than the command line can handle.
-- `sort` gives a predictable/repeatable order.
-- -r	current (instantaneous) rate
-- -a	average rate
-- -8	bits per second (not bytes)
-- -t	elapsed time
-- -p	progress bar
-- -e	ETA
-- `ssh -T` don't create a login session at the other end
-- `BatchMode=yes` "get in; get out"
-
-[6] Unload the cache, and repeat step 5.
-
-[7] Unload the cache, and repeat step 5 and *write* the destination files.
-
-[8] Remove the file on the destination machine.
-
-[9] Remove the test files.
+[5] Clean up the garbage.
