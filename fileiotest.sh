@@ -30,18 +30,10 @@ if ! command -v pv >/dev/null 2>&1; then
     sudo dnf -y install pv
 fi
 
-# If bits are supported as a UOM, let's use them. The
-# -8 flag supports measuring in bits per second.
-if pv --help 2>&1 | grep -q -- '-8'; then
-    PV_FLAGS='-ra8tpe -i 1'
-else
-    PV_FLAGS='-rabtpe -i 1'
-fi
-
 export PV_FLAGS DEST
 
 # Build files filled with junk. This bit of code requires python3.9+
-/usr/bin/time -v python3 ./randomfiles.py -n "$NUM"
+python3 ./randomfiles.py -n "$NUM"
 
 # Try blowing out the whole cache. If it doesn't work, not a big deal.
 sync
