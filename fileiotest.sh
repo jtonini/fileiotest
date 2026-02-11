@@ -32,8 +32,29 @@ fi
 
 export PV_FLAGS DEST
 
+find_python()
+{
+  for py in python3 python3.9; do
+    if command -v "$py" >/dev/null &&
+       "$py" -c 'import sys; exit(sys.version_info < (3,9))'
+    then
+      echo "$py"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PYTHON=$(find_python) || {
+  echo "Python 3.9+ required."
+  exit 1
+}
+
+
 # Build files filled with junk. This bit of code requires python3.9+
-python3 ./randomfiles.py -n "$NUM"
+# First, see if python3 is pointing at python3.9 or higher, and then
+# try python3.9 specifically.
+eval "$PYTHON" ./randomfiles.py -n "$NUM"
 
 # Try blowing out the whole cache. If it doesn't work, not a big deal.
 sync
@@ -52,8 +73,8 @@ echo "Initial stats" >> $STATS_FILE
 nstat -az | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
 
 # Here is the UGLY UGLY business end of the code.
-
-run_transfer() {
+run_transfer()
+{
   set -o pipefail
 
   find . -type f -name "*.iotest" -print0 \
