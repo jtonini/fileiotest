@@ -68,7 +68,7 @@ find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -e
 # Record the user stats
 ###############################################################################
 date >> $STATS_FILE
-echo `hostname` to $DEST >> $STATS_FILE
+echo `whoami`@`hostname` to $DEST >> $STATS_FILE
 echo "Initial stats" >> $STATS_FILE
 nstat -az | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
 
@@ -89,7 +89,7 @@ run_transfer()
 # First run. Comments in the first run only -- same commands are used in the
 # next two runs.
 ###############################################################################
-echo "=== COLD-CACHE RUN ===" >> $STATS_FILE
+echo "=== COLD-CACHE RUN ===" | tee -a $STATS_FILE
 
 # Attempt to empty the cache on the remote machine.
 ssh -T $DEST 'echo 3 | sudo tee /proc/sys/vm/drop_caches'
@@ -105,15 +105,24 @@ nstat -a | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
 find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -t
 ###############################################################################
 ###############################################################################
-echo "=== HOT-CACHE RUN ===" >> $STATS_FILE
+echo "=== 3 HOT-CACHE RUNS ===" | tee -a $STATS_FILE
 ssh -T $DEST 'echo 3 | sudo tee /proc/sys/vm/drop_caches'
+run_transfer
+cat pv.last >> $STATS_FILE
+echo "Zzzleeping for 60 seconds."
+sleep 60
+run_transfer
+cat pv.last >> $STATS_FILE
+echo "ZZzleeping for 60 seconds."
+sleep 60
 run_transfer
 cat pv.last >> $STATS_FILE
 nstat -a | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
 
 ###############################################################################
 ###############################################################################
-run_transfer_and_write() {
+run_transfer_and_write()
+{
   set -o pipefail
 
   find . -type f -name "*.iotest" -print0 \
@@ -124,7 +133,7 @@ run_transfer_and_write() {
 }
 
 
-echo "=== TRUE WRITE ===" >> $STATS_FILE
+echo "=== TRUE WRITE ===" | tee -a $STATS_FILE
 find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -e
 ssh -T $DEST 'echo 3 | sudo tee /proc/sys/vm/drop_caches'
 run_transfer_and_write
