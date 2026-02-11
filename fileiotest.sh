@@ -1,32 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 {numfiles} {user@ipaddress}"
+if [[ $# -lt 3 ]]; then
+    echo "Usage: $0 {numfiles} {user@(host|ipaddress)} {stats-file-name} "
+    echo " "
+    echo " The stats file will contain tagged numbers suitable for stats processing."
+    echo " "
     exit 1
 fi
 
 NUM="$1"
 DEST="$2"
+STATS_FILE="$3"
 
-# Best to [re]build vmtouch for this distro. It is not in
+unlink $STATS_FILE
+
+# Check for vmtouch on this distro. It is not in
 # the core OS of every Linux system.
+
 if ! command -v vmtouch >/dev/null 2>&1; then
-    echo "vmtouch not installed. Building/installing it."
-    sudo dnf install -y gcc make git
-
-    tmpdir="$(mktemp -d)"
-    trap 'rm -rf "$tmpdir"' EXIT
-    git clone --depth 1 https://github.com/hoytech/vmtouch.git "$tmpdir/vmtouch"
-    make -C "$tmpdir/vmtouch"
-    if [ -w /usr/local/bin ]; then
-        sudo install -m 0755 "$tmpdir/vmtouch/vmtouch" /usr/local/bin/
-    else
-        mkdir -p "$HOME/.local"
-        export PATH="$PATH:$HOME/.local"
-        install -m 0755 "$tempdir/vmtouch/vmtouch" "$HOME/.local"
-    fi
-
+    echo "vmtouch not installed."
+    echo "It can be found here: git clone --depth 1 https://github.com/hoytech/vmtouch.git"
+    exit 2
 fi
 
 # Check on pv, too.
@@ -35,55 +30,93 @@ if ! command -v pv >/dev/null 2>&1; then
     sudo dnf -y install pv
 fi
 
-# If bits are supported as a UOM, let's use them.
+# If bits are supported as a UOM, let's use them. The
+# -8 flag supports measuring in bits per second.
 if pv --help 2>&1 | grep -q -- '-8'; then
     PV_FLAGS='-ra8tpe -i 1'
 else
     PV_FLAGS='-rabtpe -i 1'
 fi
+
 export PV_FLAGS DEST
 
-# Build files filled with junk.
-/usr/bin/time -v python ./randomfiles.py -n "$NUM"
+# Build files filled with junk. This bit of code requires python3.9+
+/usr/bin/time -v python3 ./randomfiles.py -n "$NUM"
 
 # Try blowing out the whole cache. If it doesn't work, not a big deal.
 sync
 echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null || true
 
+# Explicitly remove from the cache the files we created.
+find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -e
+
+
+###############################################################################
+# Record the user stats
+###############################################################################
+date >> $STATS_FILE
+echo `hostname` to $DEST >> $STATS_FILE
+echo "Initial stats" >> $STATS_FILE
+nstat -az | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
+
+# Here is the UGLY UGLY business end of the code.
+
+run_transfer() {
+  set -o pipefail
+
+  find . -type f -name "*.iotest" -print0 \
+    | xargs -0 -r cat \
+    | pv -f -i 1 -F "bytes=%b rate=%r " \
+        2> >(tr '\r' '\n' | awk 'NF{last=$0} END{print last}' > pv.last) \
+    | ssh -T "$DEST" "cat > /dev/null"
+}
+
+
+###############################################################################
+# First run. Comments in the first run only -- same commands are used in the
+# next two runs.
+###############################################################################
+echo "=== COLD-CACHE RUN ===" >> $STATS_FILE
+
+# Attempt to empty the cache on the remote machine.
+ssh -T $DEST 'echo 3 | sudo tee /proc/sys/vm/drop_caches'
+
+# Invoke the transfer.
+run_transfer
+cat pv.last >> $STATS_FILE
+
+# Record the stats.
+nstat -a | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
+
 # Read the files into memory.
 find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -t
-
-# Here is the business end of the code.
-run_transfer() {
-  /usr/bin/time -v bash -o pipefail -c '
-    find . -type f -name "*.iotest" -print0 \
-      | xargs -0 cat \
-      | pv $PV_FLAGS \
-      | ssh -T "$DEST" "cat > /dev/null"
-  '
-}
-
-echo "=== HOT-CACHE RUN ==="
+###############################################################################
+###############################################################################
+echo "=== HOT-CACHE RUN ===" >> $STATS_FILE
+ssh -T $DEST 'echo 3 | sudo tee /proc/sys/vm/drop_caches'
 run_transfer
+cat pv.last >> $STATS_FILE
+nstat -a | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
 
-# Explicitly remove the files we cached.
-find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -e
-
-echo "=== COLD-CACHE RUN ==="
-run_transfer
-
-echo "=== REAL WRITE ==="
+###############################################################################
+###############################################################################
 run_transfer_and_write() {
-  /usr/bin/time -v bash -o pipefail -c '
-    find . -type f -name "*.iotest" -print0 \
-      | xargs -0 cat \
-      | pv $PV_FLAGS \
-      | ssh -T "$DEST" "cat >> ./this_file_is_junk"
-  '
+  set -o pipefail
+
+  find . -type f -name "*.iotest" -print0 \
+    | xargs -0 -r cat \
+    | pv -f -i 1 -F "bytes=%b rate=%r " \
+        2> >(tr '\r' '\n' | awk 'NF{last=$0} END{print last}' > pv.last) \
+    | ssh -T "$DEST" "cat > ./this_file_is_junk"
 }
 
+
+echo "=== TRUE WRITE ===" >> $STATS_FILE
 find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -e
+ssh -T $DEST 'echo 3 | sudo tee /proc/sys/vm/drop_caches'
 run_transfer_and_write
+cat pv.last >> $STATS_FILE
+nstat -a | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
 ssh "$DEST" "rm -f ./this_file_is_junk"
 
 rm -f ./*.iotest
