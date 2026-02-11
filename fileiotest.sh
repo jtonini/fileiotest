@@ -13,7 +13,7 @@ NUM="$1"
 DEST="$2"
 STATS_FILE="$3"
 
-unlink $STATS_FILE
+unlink $STATS_FILE 2>/dev/null || true
 
 # Check for vmtouch on this distro. It is not in
 # the core OS of every Linux system.
