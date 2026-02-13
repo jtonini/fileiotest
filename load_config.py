@@ -123,13 +123,17 @@ def _collapse_arrays(text: str) -> str:
 
 
 def load_config(config_path: str = '') -> dict:
-    """Load and parse config.toml."""
+    """Load and parse config.toml.
+
+    Raises FileNotFoundError if config.toml is not found.
+    When called from the command line, the caller handles the error.
+    """
     if not config_path:
         config_path = _find_config()
     if not config_path:
-        print(f"ERROR: {CONFIG_FILE} not found.", file=sys.stderr)
-        print(f"  Run: python3 setup_wizard.py", file=sys.stderr)
-        sys.exit(1)
+        raise FileNotFoundError(
+            f"{CONFIG_FILE} not found. Run: python3 setup_wizard.py"
+        )
     with open(config_path, 'r') as f:
         text = f.read()
     try:
@@ -191,5 +195,9 @@ def config_to_shell(cfg: dict) -> str:
 
 
 if __name__ == '__main__':
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
     print(config_to_shell(cfg))
