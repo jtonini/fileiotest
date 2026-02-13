@@ -33,6 +33,100 @@ Measures and compares network throughput between lab workstations connected via 
 - **Direct wire** (wire-src -> dest): Machine-to-machine point-to-point Ethernet on a private subnet, no switch involved. Baseline measurement.
 - **Network switch** (N workstations -> dest): Traffic goes through the managed network switch infrastructure. This is what we're evaluating.
 
+## How the Test Works
+
+Each run of `fileiotest.sh` measures the transfer speed of a known payload from one
+workstation to another under three distinct caching conditions. Understanding what
+happens at each step is important because caching at any layer (filesystem, kernel,
+or disk) can inflate throughput numbers and mask the true network performance.
+
+### Step by step
+
+**1. Dependency check.** The script verifies that `vmtouch` and `pv` are available.
+If `vmtouch` is missing, it clones the repository and builds it from source. If `pv`
+is missing, it installs it via the system package manager. Both tools are essential:
+`vmtouch` gives precise control over what lives in the kernel page cache, and `pv`
+monitors the data stream to report transfer rates.
+
+**2. Generate random test files.** `randomfiles.py` creates N files of 10 MB each,
+filled with random printable characters. Using random data is deliberate -- it
+prevents compression from skewing throughput numbers, since SSH can negotiate
+compression on the transport layer. The files are written to the current directory
+with a `.iotest` suffix.
+
+**3. Lock files in sender memory.** `vmtouch -t` forces all `.iotest` files into
+the sender's page cache. Since the files were just written, they are likely already
+resident, but this step guarantees it. A second `vmtouch` call (without `-t`) can
+be uncommented to verify residency if needed.
+
+**4. Snapshot initial TCP counters.** Before any transfer begins, the script records
+`TcpRetransSegs`, `TcpOutRsts`, and `TcpExtTCPTimeouts` from `nstat`. These
+counters are cumulative, so later readings are compared against this baseline to
+compute deltas per phase.
+
+**5. Cold-cache run.** The sender flushes its page cache
+(`echo 3 > /proc/sys/vm/drop_caches`), and the receiver does the same via SSH.
+With both caches empty, the data must be read from disk on the sender and written
+through the network -- no shortcuts. The files are streamed through `pv` into
+`ssh -T` to the destination. `pv` reports the transfer rate. TCP counters are
+captured again after this phase.
+
+**6. Three hot-cache runs.** The files are loaded back into the sender's page cache
+with `vmtouch -t`. This time, the sender reads from memory rather than disk,
+isolating network performance from disk I/O. The transfer repeats three times with a
+60-second sleep between runs to capture variability over time. TCP counters are
+captured after all three runs complete.
+
+**7. True-write run.** Caches are flushed again on both ends, but this time the
+destination writes the incoming data to disk instead of discarding it (`/dev/null`).
+This captures the end-to-end cost including the receiver's disk I/O, which matters
+for real workloads like copying datasets between machines. TCP counters are captured
+one final time.
+
+**8. Cleanup.** The test files are removed from both the sender and the receiver.
+
+### Why three conditions matter
+
+The cold-cache, hot-cache, and true-write phases isolate different bottlenecks:
+
+- **Cold-cache** measures what happens when both sender and receiver start from scratch -- disk read on the sender, network transfer, discard on the receiver. This is the most conservative throughput number.
+- **Hot-cache** removes the sender's disk from the equation. If hot-cache rates are significantly higher than cold-cache, disk I/O on the sender is a bottleneck.
+- **True-write** adds the receiver's disk back in. If true-write rates are lower than cold-cache, the receiver's storage is slower than the sender's. Comparing all three reveals where the actual constraint lives.
+
+### What the output looks like
+
+A single run produces a stats file like this:
+
+```
+Fri Feb 13 11:04:06 AM EST 2026
+cazuza@badenpowell to zeus@jonimitchell
+Initial stats
+TcpRetransSegs                  1503               0.0
+TcpOutRsts                      457799             0.0
+TcpExtTCPTimeouts               705                0.0
+=== COLD-CACHE RUN ===
+bytes=28.6MiB rate=[31.2MiB/s]
+TcpRetransSegs                  1503               0.0
+TcpOutRsts                      457799             0.0
+TcpExtTCPTimeouts               705                0.0
+=== 3 HOT-CACHE RUNS ===
+bytes=28.6MiB rate=[31.6MiB/s]
+bytes=28.6MiB rate=[31.5MiB/s]
+bytes=28.6MiB rate=[31.9MiB/s]
+TcpRetransSegs                  1504               0.0
+TcpOutRsts                      457843             0.0
+TcpExtTCPTimeouts               705                0.0
+=== TRUE WRITE ===
+bytes=28.6MiB rate=[32.1MiB/s]
+TcpRetransSegs                  1504               0.0
+TcpOutRsts                      457849             0.0
+TcpExtTCPTimeouts               705                0.0
+```
+
+The `collector.sh` wrapper runs this repeatedly on a schedule, adds ping latency
+measurements, and feeds everything into `parse_run.py` to produce structured CSV
+rows for analysis.
+
 ## Repository Contents
 
 | File | Description |
