@@ -5,27 +5,27 @@ Measures and compares network throughput between lab workstations connected via 
 ## Architecture
 
 ```
-            ┌──────┐  Cat5e (no switch)  ┌──────┐
-            │ �PC   │════════════════════ │ �PC   │
-            │wire-  │   private subnet   │ dest  │
-            │ src   │                    │       │
-            └──────┘                     └───┬───┘
-                                             │
-                                        ┌────┴────┐
-                                        │ Network │
-                                        │ Switch  │
-                                        └────┬────┘
-                          ┌──────────────────┼──────────────────┐
-                          │                  │                  │
-                      ┌──────┐          ┌──────┐          ┌──────┐
-                      │ �PC   │          │ �PC   │   ...    │ �PC   │
-                      │ws_sw1│          │ws_sw2│          │ws_swN│
-                      └──────┘          └──────┘          └──────┘
+            +------+  Cat5e (no switch)  +------+
+            |  WS  |====================|  WS  |
+            |wire- |   private subnet   | dest |
+            | src  |                    |      |
+            +------+                    +--+---+
+                                           |
+                                      +----+----+
+                                      | Network |
+                                      | Switch  |
+                                      +----+----+
+                        +------------------+------------------+
+                        |                  |                  |
+                    +------+          +------+          +------+
+                    |  WS  |          |  WS  |   ...    |  WS  |
+                    |ws_sw1|          |ws_sw2|          |ws_swN|
+                    +------+          +------+          +------+
 
-  ┌──────┐
-  │ �PC   │  control machine
-  │ctrl  │  (orchestrator.sh deploys + manages ws_sw collectors)
-  └──────┘  wire-src runs its own collector independently (separate physical network)
+  +------+
+  |  WS  |  control machine
+  | ctrl |  (orchestrator.sh deploys + manages ws_sw collectors)
+  +------+  wire-src runs its own collector independently (separate physical network)
 ```
 
 **Two test paths, one destination:**
