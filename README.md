@@ -1,44 +1,56 @@
 # fileiotest — Network Performance Benchmarking
 
-Measures and compares network throughput between lab machines connected via a direct wire versus a managed network switch. Designed to collect a week of data across multiple machines simultaneously, then produce statistical comparisons and publication-quality plots.
+Measures and compares network throughput between lab workstations connected via a direct wire versus a managed network switch. Designed to collect a week of data across multiple machines simultaneously, then produce statistical comparisons and plots.
 
 ## Architecture
 
 ```
-                          ┌──────────┐
-           Cat5e wire     │          │     Network Switch
-  wire-src ══════════════ │   dest   │ ◄══════════════════ switch-src-1, switch-src-2, ...
-          private subnet  │          │     campus network
-                          └──────────┘
+            ┌──────┐  Cat5e (no switch)  ┌──────┐
+            │ �PC   │════════════════════ │ �PC   │
+            │wire-  │   private subnet   │ dest  │
+            │ src   │                    │       │
+            └──────┘                     └───┬───┘
+                                             │
+                                        ┌────┴────┐
+                                        │ Network │
+                                        │ Switch  │
+                                        └────┬────┘
+                          ┌──────────────────┼──────────────────┐
+                          │                  │                  │
+                      ┌──────┐          ┌──────┐          ┌──────┐
+                      │ �PC   │          │ �PC   │   ...    │ �PC   │
+                      │ws_sw1│          │ws_sw2│          │ws_swN│
+                      └──────┘          └──────┘          └──────┘
 
-  control-node
-    └─ orchestrator.sh deploys + manages switch machine collectors
-    └─ wire-src runs its own collector independently (separate physical network)
+  ┌──────┐
+  │ �PC   │  control machine
+  │ctrl  │  (orchestrator.sh deploys + manages ws_sw collectors)
+  └──────┘  wire-src runs its own collector independently (separate physical network)
 ```
 
 **Two test paths, one destination:**
 
-- **Direct wire** (wire-src → dest): Point-to-point Ethernet on a private subnet. Baseline measurement.
-- **Network switch** (N machines → dest): Traffic goes through the managed network infrastructure. This is what we're evaluating.
+- **Direct wire** (wire-src → dest): Machine-to-machine point-to-point Ethernet on a private subnet, no switch involved. Baseline measurement.
+- **Network switch** (N workstations → dest): Traffic goes through the managed network switch infrastructure. This is what we're evaluating.
 
 ## Repository Contents
 
 | File | Description |
 |---|---|
-| `fileiotest.sh` | Transfer benchmark — generates random files, clears caches, measures throughput via `pv`, captures TCP retransmit stats via `nstat` |
+| `fileiotest.sh` | Transfer benchmark — generates random files, clears caches on both sender and receiver, measures throughput via `pv`, captures TCP retransmit stats via `nstat` |
 | `randomfiles.py` | Generates random 10MB test files (called by `fileiotest.sh`) |
 | `setup_wizard.py` | Interactive wizard that generates `config.toml` with your site-specific machine names, IPs, and paths |
 | `load_config.py` | Reads `config.toml` for use by both Python and bash scripts |
 | `config.toml.example` | Template showing the config structure (safe to commit) |
 | `collector.sh` | Per-machine collector — runs `fileiotest.sh` every N minutes, adds ping latency, writes structured CSV |
 | `parse_run.py` | Parses the stats file from `fileiotest.sh` + ping logs into CSV rows |
-| `orchestrator.sh` | Deploys and manages collectors across all switch machines from a control node |
-| `analyze_week.py` | Statistical analysis + 7 publication-quality plots |
+| `orchestrator.sh` | Deploys and manages collectors across all switch workstations from a control machine |
+| `analyze_week.py` | Statistical analysis + 7 plots |
 | `.gitignore` | Keeps `config.toml` and results out of version control |
 
 ## Prerequisites
 
-**On all lab machines (source + destination):**
+**On all lab machines (source workstations + destination):**
 
 - `vmtouch` (can be built from source — see `fileiotest.sh`)
 - `pv` (pipe viewer)
@@ -47,7 +59,7 @@ Measures and compares network throughput between lab machines connected via a di
 - Passwordless SSH access between machines (`ssh-copy-id`)
 - Privileges to run `echo 3 > /proc/sys/vm/drop_caches`
 
-**On the control node and for analysis:**
+**On the control machine and for analysis:**
 
 - Python 3.9+
 - `pandas`, `matplotlib`, `scipy` (for `analyze_week.py`)
@@ -60,7 +72,7 @@ pip install pandas matplotlib scipy
 
 ### 1. Clone the repo
 
-On the **control node** (for switch machines):
+On the **control machine** (for switch workstations):
 
 ```bash
 git clone <repo-url>
@@ -84,26 +96,26 @@ The wizard asks for:
 
 - **Destination machine** hostname and SSH user
 - **Wire connection** source hostname and private IPs
-- **Switch machines** (space or comma separated list)
+- **Switch workstations** (space or comma separated list)
 - **Paths** (deploy directory, results directory)
 - **Collection parameters** (file count, interval, duration, ping count)
 
 It validates SSH connectivity and writes `config.toml` (which is gitignored).
 
-Run the wizard on **both** the control node and the wire source machine.
+Run the wizard on **both** the control machine and the wire source machine.
 
 ### 3. Verify SSH access
 
 Make sure the configured user can SSH without a password from:
 
-- Control node → all switch machines
-- Control node → destination
+- Control machine → all switch workstations
+- Control machine → destination
 - Wire source → destination (via the private IP)
-- Each switch machine → destination
+- Each switch workstation → destination
 
 ## Running the Collection
 
-### Start switch machines (from control node)
+### Start switch workstations (from control machine)
 
 ```bash
 ./orchestrator.sh start
@@ -111,8 +123,8 @@ Make sure the configured user can SSH without a password from:
 
 This will:
 
-1. Deploy the repo to all switch machines via SCP
-2. Launch a background collector on each machine
+1. Deploy the repo to all switch workstations via SCP
+2. Launch a background collector on each workstation
 3. Print the exact command to run on the wire source machine
 
 ### Start the wire test (from wire source)
@@ -127,7 +139,7 @@ bash ./collector.sh '<user>@<wire-dest-ip>' \
   > collector_wire.log 2>&1 &
 ```
 
-Start this at roughly the same time as the switch machines.
+Start this at roughly the same time as the switch workstations.
 
 ### Monitor progress
 
@@ -140,15 +152,15 @@ Output:
 ```
   MACHINE       STATUS      SAMPLES     CONNECTION
   wire-src      RUNNING     288         direct-wire
-  switch-1      RUNNING     288         univ-switch
-  switch-2      RUNNING     287         univ-switch
+  ws_sw1        RUNNING     288         ws-thru-switch
+  ws_sw2        RUNNING     287         ws-thru-switch
   ...
 ```
 
 ### Stop early (if needed)
 
 ```bash
-# Stop switch machines from control node:
+# Stop switch workstations from control machine:
 ./orchestrator.sh stop
 
 # Stop wire source (from that machine directly):
@@ -171,8 +183,8 @@ This SCPs all CSVs from every machine and merges them:
 all_results/
 ├── <wire-src>/
 │   └── results_<wire-src>.csv
-├── <switch-1>/
-│   └── results_<switch-1>.csv
+├── <ws_sw1>/
+│   └── results_<ws_sw1>.csv
 ├── ...
 └── all_results.csv          ← combined, ready for analysis
 ```
@@ -253,11 +265,11 @@ Each row represents one sample from one machine (27 columns):
 ## Quick Reference
 
 ```bash
-# First time setup (on control node and wire source):
+# First time setup (on control machine and wire source):
 python3 setup_wizard.py
 
 # Start the week-long collection:
-./orchestrator.sh start          # switch machines (from control node)
+./orchestrator.sh start          # switch workstations (from control machine)
 # then start wire source separately (command printed by orchestrator)
 
 # Check on things:

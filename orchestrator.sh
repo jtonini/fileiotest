@@ -181,7 +181,7 @@ do_status() {
             sample_count=$(( sample_count - 1 ))
         fi
 
-        printf "  %-12s  %-10s  %-10s  %s\n" "$host" "$status" "${sample_count}" "univ-switch"
+        printf "  %-12s  %-10s  %-10s  %s\n" "$host" "$status" "${sample_count}" "ws-thru-switch"
     done
     echo ""
 }
