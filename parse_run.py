@@ -6,33 +6,39 @@ parse_run.py — Parse the stats file from fileiotest.sh.
 Reads the structured stats file that fileiotest.sh produces (3rd arg),
 plus an optional ping log from the collector. Outputs a single CSV row.
 
-Stats file format (produced by George's fileiotest.sh):
+Stats file format (produced by fileiotest.sh):
     <date>
     user@host to dest
     Initial stats
-    TcpRetransSegs     0    0.0
-    ...
+    TcpRetransSegs                  1503               0.0
+    TcpOutRsts                      457799             0.0
+    TcpExtTCPTimeouts               705                0.0
     === COLD-CACHE RUN ===
-    bytes=95.4MiB rate=31.8MiB/s
-    TcpRetransSegs     12   0.0
+    bytes=28.6MiB rate=[31.2MiB/s]
+    TcpRetransSegs                  1503               0.0
     ...
     === 3 HOT-CACHE RUNS ===
-    bytes=... rate=...       (run 1)
-    bytes=... rate=...       (run 2)
-    bytes=... rate=...       (run 3)
+    bytes=... rate=[...]       (run 1)
+    bytes=... rate=[...]       (run 2)
+    bytes=... rate=[...]       (run 3)
     TcpRetransSegs     ...
     ...
     === TRUE WRITE ===
-    bytes=... rate=...
+    bytes=... rate=[...]
     TcpRetransSegs     ...
     ...
+
+TCP counters are cumulative — we compute deltas between sections:
+    cold  = cold_stats  - initial_stats
+    hot   = hot_stats   - cold_stats
+    write = write_stats - hot_stats
 
 Usage:
     python3 parse_run.py <statsfile> <timestamp> <num_files> <source_label> [ping_log]
 """
 
 __author__ = 'João Tonini / Claude'
-__version__ = '0.3'
+__version__ = '0.4'
 
 import csv
 import re
@@ -46,47 +52,69 @@ SECTION_MARKERS = {
     'true_write':  r'===\s*TRUE\s+WRITE\s*===',
 }
 
-# nstat TCP fields we track
-TCP_FIELDS = ['TcpRetransSegs', 'TCPTimeouts', 'TcpOutRsts']
+# nstat TCP fields we track — mapped to canonical names
+# George's script outputs TcpExtTCPTimeouts (not TCPTimeouts)
+TCP_FIELD_MAP = {
+    'tcpretranssegs':   'TcpRetransSegs',
+    'tcpoutrsts':       'TcpOutRsts',
+    'tcpexttcptimeouts': 'TcpExtTCPTimeouts',
+    'tcptimeouts':      'TcpExtTCPTimeouts',  # alias
+}
+
+TCP_FIELDS = ['TcpRetransSegs', 'TcpExtTCPTimeouts', 'TcpOutRsts']
 
 
 def parse_pv_line(line: str) -> dict:
-    """Parse a pv output line in the new tagged format.
+    """Parse a pv output line.
 
-    Format: bytes=95.4MiB rate=31.8MiB/s
+    Handles both formats:
+        bytes=28.6MiB rate=[31.2MiB/s]    (bracketed)
+        bytes=95.4MiB rate= 763Mib/s      (unbracketed)
     """
     result = {'bytes': '', 'rate': ''}
 
     m = re.search(r'bytes=\s*(\S+)', line)
     if m:
-        result['bytes'] = m.group(1)
+        result['bytes'] = m.group(1).strip('[]')
 
     m = re.search(r'rate=\s*(\S+)', line)
     if m:
-        result['rate'] = m.group(1)
+        result['rate'] = m.group(1).strip('[]')
 
     return result
 
 
 def parse_nstat_lines(lines: list) -> dict:
-    """Parse nstat output lines for TCP counters.
+    """Parse nstat output lines for TCP counters (cumulative).
 
-    nstat format:
-        TcpRetransSegs     12     0.0
+    Handles formats like:
+        TcpRetransSegs                  1503               0.0
+        TcpExtTCPTimeouts               705                0.0
 
-    Returns: {'TcpRetransSegs': 12, 'TCPTimeouts': 0, 'TcpOutRsts': 0}
+    Returns: {'TcpRetransSegs': 1503, 'TcpExtTCPTimeouts': 705, 'TcpOutRsts': 457799}
     """
-    result = {}
+    result = {f: 0 for f in TCP_FIELDS}
     for line in lines:
-        for field in TCP_FIELDS:
-            if field.lower() in line.lower():
-                parts = line.split()
-                if len(parts) >= 2:
-                    try:
-                        result[field] = int(float(parts[1]))
-                    except (ValueError, IndexError):
-                        result[field] = 0
+        parts = line.split()
+        if len(parts) >= 2:
+            field_lower = parts[0].lower()
+            if field_lower in TCP_FIELD_MAP:
+                canonical = TCP_FIELD_MAP[field_lower]
+                try:
+                    result[canonical] = int(float(parts[1]))
+                except (ValueError, IndexError):
+                    pass
     return result
+
+
+def tcp_delta(after: dict, before: dict) -> dict:
+    """Compute per-phase TCP deltas from cumulative counters."""
+    delta = {}
+    for field in TCP_FIELDS:
+        a = after.get(field, 0)
+        b = before.get(field, 0)
+        delta[field] = max(0, a - b)
+    return delta
 
 
 def split_stats_file(text: str) -> dict:
@@ -117,63 +145,17 @@ def split_stats_file(text: str) -> dict:
     return sections
 
 
-def parse_section_cold_or_write(lines: list) -> dict:
-    """Parse a section with 1 pv line + nstat output.
-
-    Used for COLD-CACHE and TRUE WRITE sections.
-    """
-    result = {
-        'bytes': '', 'rate': '',
-        'TcpRetransSegs': '', 'TCPTimeouts': '', 'TcpOutRsts': '',
-    }
-
-    # Find pv line (contains "bytes=" and "rate=")
-    pv_lines = [l for l in lines if 'bytes=' in l and 'rate=' in l]
-    if pv_lines:
-        pv = parse_pv_line(pv_lines[0])
-        result['bytes'] = pv['bytes']
-        result['rate'] = pv['rate']
-
-    # Find nstat lines
-    nstat_lines = [l for l in lines
-                   if any(f.lower() in l.lower() for f in TCP_FIELDS)]
-    tcp = parse_nstat_lines(nstat_lines)
-    for field in TCP_FIELDS:
-        if field in tcp:
-            result[field] = tcp[field]
-
-    return result
+def get_tcp_from_lines(lines: list) -> dict:
+    """Extract TCP stats from a section's lines."""
+    tcp_lines = [l for l in lines if any(
+        k in l.lower() for k in TCP_FIELD_MAP
+    )]
+    return parse_nstat_lines(tcp_lines)
 
 
-def parse_section_hot_cache(lines: list) -> dict:
-    """Parse the hot-cache section with 3 pv lines + nstat output.
-
-    Returns rates for each run plus combined TCP stats.
-    """
-    result = {
-        'run1_bytes': '', 'run1_rate': '',
-        'run2_bytes': '', 'run2_rate': '',
-        'run3_bytes': '', 'run3_rate': '',
-        'TcpRetransSegs': '', 'TCPTimeouts': '', 'TcpOutRsts': '',
-    }
-
-    # Find all pv lines
-    pv_lines = [l for l in lines if 'bytes=' in l and 'rate=' in l]
-    for i, pv_line in enumerate(pv_lines[:3]):
-        pv = parse_pv_line(pv_line)
-        run = i + 1
-        result[f'run{run}_bytes'] = pv['bytes']
-        result[f'run{run}_rate'] = pv['rate']
-
-    # Find nstat lines
-    nstat_lines = [l for l in lines
-                   if any(f.lower() in l.lower() for f in TCP_FIELDS)]
-    tcp = parse_nstat_lines(nstat_lines)
-    for field in TCP_FIELDS:
-        if field in tcp:
-            result[field] = tcp[field]
-
-    return result
+def parse_pv_from_lines(lines: list) -> list:
+    """Extract all pv output lines from a section."""
+    return [l for l in lines if 'bytes=' in l and 'rate=' in l]
 
 
 def parse_ping_log(filepath: str) -> dict:
@@ -213,7 +195,9 @@ def parse_ping_log(filepath: str) -> dict:
 
 
 def build_csv_row(timestamp: str, num_files: str, source: str,
-                  cold: dict, hot: dict, write: dict,
+                  cold_pv: dict, cold_tcp: dict,
+                  hot_pvs: list, hot_tcp: dict,
+                  write_pv: dict, write_tcp: dict,
                   ping: dict) -> list:
     """Build a flat CSV row."""
     row = [timestamp, source, num_files]
@@ -229,33 +213,33 @@ def build_csv_row(timestamp: str, num_files: str, source: str,
 
     # Cold cache
     row.extend([
-        cold.get('bytes', ''),
-        cold.get('rate', ''),
-        cold.get('TcpRetransSegs', ''),
-        cold.get('TCPTimeouts', ''),
-        cold.get('TcpOutRsts', ''),
+        cold_pv.get('bytes', ''),
+        cold_pv.get('rate', ''),
+        cold_tcp.get('TcpRetransSegs', 0),
+        cold_tcp.get('TcpExtTCPTimeouts', 0),
+        cold_tcp.get('TcpOutRsts', 0),
     ])
 
     # Hot cache (3 runs)
-    for run in [1, 2, 3]:
-        row.extend([
-            hot.get(f'run{run}_bytes', ''),
-            hot.get(f'run{run}_rate', ''),
-        ])
-    # Hot cache TCP stats (combined for all 3 runs)
+    for i in range(3):
+        if i < len(hot_pvs):
+            row.extend([hot_pvs[i].get('bytes', ''), hot_pvs[i].get('rate', '')])
+        else:
+            row.extend(['', ''])
+    # Hot cache TCP deltas (combined for all 3 runs)
     row.extend([
-        hot.get('TcpRetransSegs', ''),
-        hot.get('TCPTimeouts', ''),
-        hot.get('TcpOutRsts', ''),
+        hot_tcp.get('TcpRetransSegs', 0),
+        hot_tcp.get('TcpExtTCPTimeouts', 0),
+        hot_tcp.get('TcpOutRsts', 0),
     ])
 
     # True write
     row.extend([
-        write.get('bytes', ''),
-        write.get('rate', ''),
-        write.get('TcpRetransSegs', ''),
-        write.get('TCPTimeouts', ''),
-        write.get('TcpOutRsts', ''),
+        write_pv.get('bytes', ''),
+        write_pv.get('rate', ''),
+        write_tcp.get('TcpRetransSegs', 0),
+        write_tcp.get('TcpExtTCPTimeouts', 0),
+        write_tcp.get('TcpOutRsts', 0),
     ])
 
     return row
@@ -301,13 +285,35 @@ def main():
 
     sections = split_stats_file(stats_text)
 
-    cold = parse_section_cold_or_write(sections.get('cold_cache', []))
-    hot = parse_section_hot_cache(sections.get('hot_cache', []))
-    write = parse_section_cold_or_write(sections.get('true_write', []))
+    # Get cumulative TCP stats from each section
+    tcp_initial = get_tcp_from_lines(sections.get('initial', []))
+    tcp_cold_cum = get_tcp_from_lines(sections.get('cold_cache', []))
+    tcp_hot_cum = get_tcp_from_lines(sections.get('hot_cache', []))
+    tcp_write_cum = get_tcp_from_lines(sections.get('true_write', []))
+
+    # Compute per-phase deltas
+    cold_tcp = tcp_delta(tcp_cold_cum, tcp_initial)
+    hot_tcp = tcp_delta(tcp_hot_cum, tcp_cold_cum)
+    write_tcp = tcp_delta(tcp_write_cum, tcp_hot_cum)
+
+    # Parse pv throughput lines
+    cold_pv_lines = parse_pv_from_lines(sections.get('cold_cache', []))
+    cold_pv = parse_pv_line(cold_pv_lines[0]) if cold_pv_lines else {}
+
+    hot_pv_lines = parse_pv_from_lines(sections.get('hot_cache', []))
+    hot_pvs = [parse_pv_line(l) for l in hot_pv_lines[:3]]
+
+    write_pv_lines = parse_pv_from_lines(sections.get('true_write', []))
+    write_pv = parse_pv_line(write_pv_lines[0]) if write_pv_lines else {}
+
+    # Parse ping log
     ping = parse_ping_log(ping_logfile) if ping_logfile else {}
 
     row = build_csv_row(timestamp, num_files, source_label,
-                        cold, hot, write, ping)
+                        cold_pv, cold_tcp,
+                        hot_pvs, hot_tcp,
+                        write_pv, write_tcp,
+                        ping)
 
     writer = csv.writer(sys.stdout)
     writer.writerow(row)
