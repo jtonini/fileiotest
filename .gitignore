@@ -1,0 +1,15 @@
+# Site-specific config — do not commit
+config.toml
+config.toml.bak
+
+# Collection results
+collector_results/
+all_results/
+analysis/
+
+# Test files
+*.iotest
+
+# Python
+__pycache__/
+*.pyc

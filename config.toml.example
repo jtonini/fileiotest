@@ -1,0 +1,45 @@
+# fileiotest configuration
+# Copy this to config.toml and fill in your values,
+# or run ./setup_wizard.py to generate it interactively.
+#
+# NOTE: config.toml contains site-specific information and
+#       should NOT be committed to version control.
+
+[destination]
+# The machine all sources send data to (campus network hostname)
+machine = "CHANGEME"
+user = "CHANGEME"
+
+[wire]
+# Direct wire connection (point-to-point Ethernet)
+# The source machine with a direct cable to the destination
+source_machine = "CHANGEME"
+# IP addresses on the private link (e.g., 10.0.0.x subnet)
+dest_ip = "CHANGEME"
+source_ip = "CHANGEME"
+
+[source]
+# All machines that go through the university switch
+switch_machines = [
+    "CHANGEME",
+]
+
+[paths]
+# Where the repo gets deployed on source machines
+deploy_dir = "~/fileiotest"
+
+# Where results are stored on each source machine
+results_dir = "./collector_results"
+
+[collection]
+# Comma-separated file counts to cycle through
+num_files = "10"
+
+# Minutes between samples
+interval_min = 15
+
+# Total collection duration in hours (168 = 1 week)
+duration_hr = 168
+
+# Number of pings per sample
+ping_count = 20
