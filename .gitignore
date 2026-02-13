@@ -13,3 +13,5 @@ analysis/
 # Python
 __pycache__/
 *.pyc
+pv.last
+files.zip
