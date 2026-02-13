@@ -126,14 +126,14 @@ while [[ $sample -lt $TOTAL_SAMPLES ]] && [[ "$RUNNING" == "true" ]]; do
 
     TIMESTAMP="$(date -Iseconds)"
     SAFE_TS="$(date +%Y%m%d_%H%M%S)"
-    LOGFILE="$RESULTS_DIR/logs/${SOURCE_LABEL}_run_${SAFE_TS}_n${NUM}.log"
-    STATSFILE="$RESULTS_DIR/logs/${SOURCE_LABEL}_stats_${SAFE_TS}_n${NUM}.txt"
+    LOGFILE="$(cd "$RESULTS_DIR" && pwd)/logs/${SOURCE_LABEL}_run_${SAFE_TS}_n${NUM}.log"
+    STATSFILE="$(cd "$RESULTS_DIR" && pwd)/logs/${SOURCE_LABEL}_stats_${SAFE_TS}_n${NUM}.txt"
 
     sample=$(( sample + 1 ))
     echo "[${TIMESTAMP}] ${SOURCE_LABEL}: Sample ${sample}/${TOTAL_SAMPLES} — NUM=${NUM}"
 
     # ── Ping latency ─────────────────────────────────────────────────
-    PINGLOG="$RESULTS_DIR/logs/${SOURCE_LABEL}_ping_${SAFE_TS}.log"
+    PINGLOG="$(cd "$RESULTS_DIR" && pwd)/logs/${SOURCE_LABEL}_ping_${SAFE_TS}.log"
     ping -c "$PING_COUNT" -q "$DEST_HOST" > "$PINGLOG" 2>&1 || true
 
     # ── Run the benchmark ────────────────────────────────────────────
