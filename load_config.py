@@ -14,16 +14,27 @@ Can be used in two ways:
     eval "$(python3 load_config.py)"
     echo $DEST_MACHINE   # → myhost
 
-Supports Python 3.9+ (uses tomllib if available, falls back to
-a simple parser for our limited TOML subset).
+Requires Python 3.11+ (tomllib) or 'pip install tomli' for older versions.
 """
 
 __author__ = 'João Tonini'
-__version__ = '0.2'
+__version__ = '0.3'
 
 import os
-import re
 import sys
+
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        print(
+            "ERROR: Python 3.11+ required (for tomllib), or install tomli:\n"
+            "  pip install tomli",
+            file=sys.stderr
+        )
+        sys.exit(1)
 
 CONFIG_FILE = 'config.toml'
 
@@ -39,94 +50,10 @@ def _find_config() -> str:
     return ''
 
 
-def _simple_toml_parse(text: str) -> dict:
-    """Minimal TOML parser for our flat config structure."""
-    config = {}
-    lines = text.splitlines()
-    cleaned = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('#'):
-            continue
-        if '#' in stripped and not stripped.startswith('"'):
-            in_quote = False
-            for i, ch in enumerate(stripped):
-                if ch == '"':
-                    in_quote = not in_quote
-                elif ch == '#' and not in_quote:
-                    stripped = stripped[:i].rstrip()
-                    break
-        cleaned.append(stripped)
-
-    full_text = '\n'.join(cleaned)
-    section_pattern = re.compile(r'^\[(\w+)\]\s*$', re.MULTILINE)
-    sections = section_pattern.split(full_text)
-
-    i = 1
-    while i < len(sections) - 1:
-        section_name = sections[i]
-        section_body = sections[i + 1]
-        config[section_name] = _parse_section(section_body)
-        i += 2
-
-    return config
-
-
-def _parse_section(body: str) -> dict:
-    result = {}
-    body = _collapse_arrays(body)
-    for line in body.splitlines():
-        line = line.strip()
-        if not line or line.startswith('#'):
-            continue
-        m = re.match(r'(\w+)\s*=\s*(.+)', line)
-        if not m:
-            continue
-        key = m.group(1)
-        raw_value = m.group(2).strip()
-        if raw_value.startswith('['):
-            items = re.findall(r'"([^"]*)"', raw_value)
-            result[key] = items
-        elif raw_value.startswith('"') and raw_value.endswith('"'):
-            result[key] = raw_value.strip('"')
-        elif raw_value.isdigit():
-            result[key] = int(raw_value)
-        elif re.match(r'^\d+\.\d+$', raw_value):
-            result[key] = float(raw_value)
-        elif raw_value.lower() in ('true', 'false'):
-            result[key] = raw_value.lower() == 'true'
-        else:
-            result[key] = raw_value
-    return result
-
-
-def _collapse_arrays(text: str) -> str:
-    result = []
-    in_array = False
-    array_buf = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if in_array:
-            array_buf.append(stripped)
-            if ']' in stripped:
-                result.append(' '.join(array_buf))
-                array_buf = []
-                in_array = False
-        elif '= [' in stripped and ']' not in stripped:
-            in_array = True
-            array_buf = [stripped]
-        else:
-            result.append(stripped)
-    if array_buf:
-        result.append(' '.join(array_buf))
-    return '\n'.join(result)
-
-
 def load_config(config_path: str = '') -> dict:
     """Load and parse config.toml.
 
     Raises FileNotFoundError if config.toml is not found.
-    When called from the command line, the caller handles the error.
     """
     if not config_path:
         config_path = _find_config()
@@ -134,19 +61,8 @@ def load_config(config_path: str = '') -> dict:
         raise FileNotFoundError(
             f"{CONFIG_FILE} not found. Run: python3 setup_wizard.py"
         )
-    with open(config_path, 'r') as f:
-        text = f.read()
-    try:
-        import tomllib
-        return tomllib.loads(text)
-    except ImportError:
-        pass
-    try:
-        import tomli
-        return tomli.loads(text)
-    except ImportError:
-        pass
-    return _simple_toml_parse(text)
+    with open(config_path, 'rb') as f:
+        return tomllib.load(f)
 
 
 def config_to_shell(cfg: dict) -> str:
