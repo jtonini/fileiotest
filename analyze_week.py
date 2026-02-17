@@ -15,7 +15,7 @@ Dependencies:
     pip install pandas matplotlib scipy
 """
 
-__author__ = 'João Tonini / Claude'
+__author__ = 'João Tonini'
 __version__ = '0.3'
 
 import argparse

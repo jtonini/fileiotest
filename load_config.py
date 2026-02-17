@@ -18,7 +18,7 @@ Supports Python 3.9+ (uses tomllib if available, falls back to
 a simple parser for our limited TOML subset).
 """
 
-__author__ = 'João Tonini / Claude'
+__author__ = 'João Tonini'
 __version__ = '0.2'
 
 import os

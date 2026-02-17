@@ -37,7 +37,7 @@ Usage:
     python3 parse_run.py <statsfile> <timestamp> <num_files> <source_label> [ping_log]
 """
 
-__author__ = 'João Tonini / Claude'
+__author__ = 'João Tonini'
 __version__ = '0.4'
 
 import csv

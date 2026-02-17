@@ -11,7 +11,7 @@ Usage:
     python3 setup_wizard.py --no-validate   # skip SSH checks
 """
 
-__author__ = 'João Tonini / Claude'
+__author__ = 'João Tonini'
 __version__ = '0.2'
 
 import argparse
