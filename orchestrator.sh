@@ -89,6 +89,7 @@ do_start() {
                 DURATION_HR='${DURATION_HR}' \
                 PING_COUNT='${PING_COUNT}' \
                 SOURCE_LABEL='${host}' \
+                PATH="${DEPLOY_DIR}:${PATH}"
                 RESULTS_DIR='./collector_results' \
             bash ./collector.sh '${DEST}' \
                 > ${DEPLOY_DIR}/collector_${host}.log 2>&1 </dev/null &
