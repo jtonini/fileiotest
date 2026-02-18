@@ -12,7 +12,7 @@ Usage:
 """
 
 __author__ = 'João Tonini'
-__version__ = '0.2'
+__version__ = '0.3'
 
 import argparse
 import os
@@ -92,6 +92,7 @@ user = "{config['dest_user']}"
 
 [wire]
 source_machine = "{config['wire_source']}"
+user = "{config['wire_user']}"
 dest_ip = "{config['wire_dest_ip']}"
 source_ip = "{config['wire_source_ip']}"
 
@@ -99,6 +100,7 @@ source_ip = "{config['wire_source_ip']}"
 switch_machines = [
     {machines_str},
 ]
+user = "{config['switch_user']}"
 
 [paths]
 deploy_dir = "{config['deploy_dir']}"
@@ -120,6 +122,9 @@ def main():
                         help='Skip SSH connectivity validation')
     args = parser.parse_args()
 
+    # Clear screen
+    os.system('clear')
+
     print()
     print("╔══════════════════════════════════════════════════════════════╗")
     print("║  fileiotest Setup Wizard                                    ║")
@@ -140,10 +145,12 @@ def main():
 
     # ─── Destination ──────────────────────────────────────────────────
     print("─── Destination Machine ────────────────────────────────────")
-    print("  The machine that receives all transfers (campus network).")
+    print("  The machine that receives all transfers (both wire and")
+    print("  switch tests send data to this machine).")
     print()
     config['dest_machine'] = ask("Destination hostname")
-    config['dest_user'] = ask("SSH username", default=os.environ.get('USER', ''))
+    config['dest_user'] = ask("SSH username on destination",
+                              default=os.environ.get('USER', ''))
     print()
 
     # ─── Wire connection ──────────────────────────────────────────────
@@ -152,6 +159,8 @@ def main():
     print("  This uses a private IP subnet (e.g., 10.0.0.x).")
     print()
     config['wire_source'] = ask("Wire source machine hostname (sender)")
+    config['wire_user'] = ask("SSH username for wire test",
+                              default=config['dest_user'])
     config['wire_dest_ip'] = ask("Destination IP on the wire (receiver end)",
                                  default="10.0.0.1")
     config['wire_source_ip'] = ask("Source IP on the wire (sender end)",
@@ -164,20 +173,37 @@ def main():
 
     # ─── Switch machines ──────────────────────────────────────────────
     print("─── University Switch Sources ──────────────────────────────")
-    print("  All machines that connect to the destination through the")
+    print("  Workstations that connect to the destination through the")
     print("  university network switch.")
+    print(f"  (Do NOT include the destination '{config['dest_machine']}' here.)")
     print()
-    config['switch_machines'] = ask_list(
+    config['switch_user'] = ask("SSH username for switch tests",
+                                default=config['dest_user'])
+    raw_machines = ask_list(
         "Machine hostnames (space or comma separated)",
-        hint="  e.g.: host1 host2 host3 host4 host5 host6"
+        hint="    e.g.: host1 host2 host3 host4 host5 host6"
     )
-    print()
 
+    # Remove destination if accidentally included
+    dest = config['dest_machine']
+    filtered = [m for m in raw_machines if m != dest]
+    if len(filtered) < len(raw_machines):
+        print(f"\n  NOTE: Removed '{dest}' from switch sources — a machine")
+        print(f"  cannot send to itself.")
+    config['switch_machines'] = filtered
+
+    if not config['switch_machines']:
+        print("  ERROR: No switch sources remain after removing destination.")
+        sys.exit(1)
+
+    print()
     total = 1 + len(config['switch_machines'])
     print(f"  Total: {total} source machines → {config['dest_machine']}")
-    print(f"    Wire:          {config['wire_source']} → {config['wire_dest_ip']}")
+    print(f"    Wire:          {config['wire_source']} → {config['wire_dest_ip']}"
+          f"  (as {config['wire_user']})")
     print(f"    Switch ({len(config['switch_machines']):2d}):   "
-          f"{', '.join(config['switch_machines'])} → {config['dest_machine']}")
+          f"{', '.join(config['switch_machines'])} → {config['dest_machine']}"
+          f"  (as {config['switch_user']})")
     print()
 
     # ─── Paths ────────────────────────────────────────────────────────
@@ -202,46 +228,53 @@ def main():
     # ─── Validate SSH ─────────────────────────────────────────────────
     if not args.no_validate:
         print("─── Validating SSH Connectivity ────────────────────────────")
-        print(f"  Testing SSH as {config['dest_user']}@<host>...")
         print()
 
-        # Campus network hosts
-        campus_hosts = [config['dest_machine']] + config['switch_machines']
         failures = []
 
-        for host in campus_hosts:
-            label = f"{config['dest_user']}@{host}"
+        # Destination
+        label = f"{config['dest_user']}@{config['dest_machine']}"
+        sys.stdout.write(f"  {label:30s} ")
+        sys.stdout.flush()
+        if validate_ssh(config['dest_user'], config['dest_machine']):
+            print("✓  (destination)")
+        else:
+            print("✗  (SSH failed)")
+            failures.append(config['dest_machine'])
+
+        # Switch sources
+        for host in config['switch_machines']:
+            label = f"{config['switch_user']}@{host}"
             sys.stdout.write(f"  {label:30s} ")
             sys.stdout.flush()
-            if validate_ssh(config['dest_user'], host):
+            if validate_ssh(config['switch_user'], host):
                 print("✓  (campus)")
             else:
                 print("✗  (SSH failed)")
                 failures.append(host)
 
         # Wire machine — may only be reachable from the current host
-        # or not at all if we're not on it
         host = config['wire_source']
-        label = f"{config['dest_user']}@{host}"
+        label = f"{config['wire_user']}@{host}"
         sys.stdout.write(f"  {label:30s} ")
         sys.stdout.flush()
-        if validate_ssh(config['dest_user'], host):
+        if validate_ssh(config['wire_user'], host):
             print("✓  (campus)")
         else:
             print("?  (may only be reachable locally)")
 
         # Wire destination IP — likely only reachable from wire source
-        label = f"{config['dest_user']}@{config['wire_dest_ip']}"
+        label = f"{config['wire_user']}@{config['wire_dest_ip']}"
         sys.stdout.write(f"  {label:30s} ")
         sys.stdout.flush()
-        if validate_ssh(config['dest_user'], config['wire_dest_ip']):
+        if validate_ssh(config['wire_user'], config['wire_dest_ip']):
             print("✓  (wire)")
         else:
             print("?  (only reachable from {})".format(config['wire_source']))
 
         print()
         if failures:
-            print(f"  WARNING: SSH failed for {len(failures)} campus host(s): "
+            print(f"  WARNING: SSH failed for {len(failures)} host(s): "
                   f"{', '.join(failures)}")
             print("  Make sure passwordless SSH is configured (ssh-copy-id).")
             print()
@@ -249,7 +282,7 @@ def main():
                 print("  Aborted. Fix SSH and re-run the wizard.")
                 sys.exit(1)
         else:
-            print("  Campus hosts reachable. Wire IPs checked above.")
+            print("  All campus hosts reachable. Wire IPs checked above.")
         print()
 
     # ─── Write config ─────────────────────────────────────────────────
@@ -281,9 +314,9 @@ def main():
     print(f"    cd {config['deploy_dir']}")
     print(f"    nohup env \\")
     print(f"      SOURCE_LABEL='{config['wire_source']}' \\")
-    print(f"      DEST_CACHE_SSH='{config['dest_user']}@{config['wire_dest_ip']}' \\")
+    print(f"      DEST_CACHE_SSH='{config['wire_user']}@{config['wire_dest_ip']}' \\")
     print(f"    bash ./collector.sh "
-          f"'{config['dest_user']}@{config['wire_dest_ip']}' \\")
+          f"'{config['wire_user']}@{config['wire_dest_ip']}' \\")
     print(f"      > collector_{config['wire_source']}.log 2>&1 &")
     print()
 
