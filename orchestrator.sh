@@ -91,7 +91,7 @@ do_start() {
                 SOURCE_LABEL='${host}' \
                 RESULTS_DIR='${DEPLOY_DIR}/collector_results' \
             bash ./collector.sh '${DEST}' \
-                > ${DEPLOY_DIR}/collector_${host}.log 2>&1 </dev/null &
+                > ${DEPLOY_DIR}/collector_${host}.log 2>&1 </dev/null & disown
         " && ok "started" \
           || fail "launch failed"
     done
