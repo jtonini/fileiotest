@@ -85,8 +85,8 @@ do_start() {
             cd ${DEPLOY_DIR} && \
             export NUM_FILES='${NUM_FILES}' INTERVAL_MIN='${INTERVAL_MIN}' \
                    DURATION_HR='${DURATION_HR}' PING_COUNT='${PING_COUNT}' \
-                   SOURCE_LABEL='${host}' PATH='${DEPLOY_DIR}':\\\$PATH \
-                   RESULTS_DIR='./collector_results' && \
+                   SOURCE_LABEL='${host}' RESULTS_DIR='./collector_results' && \
+            PATH=.:/usr/local/bin:/usr/bin:/usr/sbin /usr/bin/nohup /usr/bin/bash ./collector.sh '${DEST}' \
             /usr/bin/nohup /usr/bin/bash ./collector.sh '${DEST}' \
                 > ${DEPLOY_DIR}/collector_${host}.log 2>&1 </dev/null &
         " >/dev/null 2>&1 \
