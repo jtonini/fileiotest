@@ -81,20 +81,18 @@ do_start() {
             continue
         fi
 
-        ssh -f -o ConnectTimeout=5 -o BatchMode=yes "${DEST_USER}@${host}" "
+        ssh_cmd "$host" "
             cd ${DEPLOY_DIR} && \
-            nohup env \
-                NUM_FILES='${NUM_FILES}' \
-                INTERVAL_MIN='${INTERVAL_MIN}' \
-                DURATION_HR='${DURATION_HR}' \
-                PING_COUNT='${PING_COUNT}' \
-                SOURCE_LABEL='${host}' \
-                PATH="${DEPLOY_DIR}:${PATH}"
-                RESULTS_DIR='./collector_results' \
-            bash ./collector.sh '${DEST}' \
+            export NUM_FILES='${NUM_FILES}' INTERVAL_MIN='${INTERVAL_MIN}' \
+                   DURATION_HR='${DURATION_HR}' PING_COUNT='${PING_COUNT}' \
+                   SOURCE_LABEL='${host}' PATH='${DEPLOY_DIR}':\\\$PATH \
+                   RESULTS_DIR='./collector_results' && \
+            nohup bash ./collector.sh '${DEST}' \
                 > ${DEPLOY_DIR}/collector_${host}.log 2>&1 </dev/null &
-        " && ok "started" \
+        " >/dev/null 2>&1 \
+        && ok "started" \
           || fail "launch failed"
+
     done
 
     DAYS=$(( DURATION_HR / 24 ))
