@@ -48,41 +48,8 @@ do_deploy() {
 
     for host in "${SWITCH_MACHINES[@]}"; do
         printf "  %-12s " "$host"
-        if ssh_cmd "$host" "mkdir -p ${DEPLOY_DIR}"; then
-            scp -q -o BatchMode=yes \
-                "$SCRIPT_DIR"/{fileiotest.sh,randomfiles.py,collector.sh,parse_run.py,load_config.py,config.toml} \
-                "${DEST_USER}@${host}:${DEPLOY_DIR}/" 2>/dev/null \
-            && ssh_cmd "$host" "chmod +x ${DEPLOY_DIR}/{fileiotest.sh,collector.sh,parse_run.py}" \
-            && ok "deployed" \
-            || fail "scp failed"
-        else
-            fail "ssh failed"
-        fi
-    done
-    echo ""
-}
-
-# ─── Start ────────────────────────────────────────────────────────────
-do_start() {
-    echo "Starting collectors on ${#SWITCH_MACHINES[@]} switch machines → ${DEST}"
-    echo "  Config: NUM_FILES=${NUM_FILES}  INTERVAL=${INTERVAL_MIN}min  DURATION=${DURATION_HR}hr"
-    echo ""
-
-    do_deploy
-
-    echo "Launching switch machine collectors..."
-    echo ""
-
-    for host in "${SWITCH_MACHINES[@]}"; do
-        printf "  %-12s " "$host"
-
-        if ssh_cmd "$host" "pgrep -f 'collector.sh.*${DEST_MACHINE}'" >/dev/null 2>&1; then
-            warn "already running — skipping (use 'stop' first)"
-            continue
-        fi
-
-        ssh_cmd "$host" "
-            cd ${DEPLOY_DIR} && \
+        ssh -f -o ConnectTimeout=5 -o BatchMode=yes "${DEST_USER}@${host}" \
+            "cd ${DEPLOY_DIR} && \
             nohup env \
                 NUM_FILES='${NUM_FILES}' \
                 INTERVAL_MIN='${INTERVAL_MIN}' \
@@ -91,8 +58,8 @@ do_start() {
                 SOURCE_LABEL='${host}' \
                 RESULTS_DIR='${DEPLOY_DIR}/collector_results' \
             bash ./collector.sh '${DEST}' \
-                > ${DEPLOY_DIR}/collector_${host}.log 2>&1 </dev/null & disown
-        " && ok "started" \
+                > ${DEPLOY_DIR}/collector_${host}.log 2>&1 </dev/null &" \
+        && ok "started" \
           || fail "launch failed"
     done
 
@@ -133,144 +100,3 @@ do_stop() {
 
     for host in "${SWITCH_MACHINES[@]}"; do
         printf "  %-12s " "$host"
-        if ssh_cmd "$host" "pkill -TERM -f 'collector.sh.*${DEST_MACHINE}'" 2>/dev/null; then
-            ok "stop signal sent"
-        else
-            info "no collector running"
-        fi
-    done
-
-    echo ""
-    echo "NOTE: If ${WIRE_SOURCE_MACHINE} is running, stop it manually:"
-    echo "  ssh ${DEST_USER}@${WIRE_SOURCE_MACHINE}  # (or access directly)"
-    echo "  pkill -TERM -f collector.sh"
-    echo ""
-}
-
-# ─── Status ───────────────────────────────────────────────────────────
-do_status() {
-    echo "Collector status:"
-    echo ""
-    printf "  %-12s  %-10s  %-10s  %s\n" "MACHINE" "STATUS" "SAMPLES" "CONNECTION"
-
-    # Wire machine
-    host="$WIRE_SOURCE_MACHINE"
-    if ssh_cmd "$host" "pgrep -f 'collector.sh'" >/dev/null 2>&1; then
-        wire_status="RUNNING"
-    else
-        wire_status="unknown"
-    fi
-    csv_path="${DEPLOY_DIR}/collector_results/results_${host}.csv"
-    sample_count=$(ssh_cmd "$host" "wc -l < ${csv_path} 2>/dev/null" 2>/dev/null || echo "0")
-    if [[ "$sample_count" -gt 0 ]] 2>/dev/null; then
-        sample_count=$(( sample_count - 1 ))
-    fi
-    printf "  %-12s  %-10s  %-10s  %s\n" "$host" "$wire_status" "${sample_count}" "direct-wire"
-
-    # Switch machines
-    for host in "${SWITCH_MACHINES[@]}"; do
-        if ssh_cmd "$host" "pgrep -f 'collector.sh.*${DEST_MACHINE}'" >/dev/null 2>&1; then
-            status="RUNNING"
-        else
-            status="stopped"
-        fi
-
-        csv_path="${DEPLOY_DIR}/collector_results/results_${host}.csv"
-        sample_count=$(ssh_cmd "$host" "wc -l < ${csv_path} 2>/dev/null" 2>/dev/null || echo "0")
-        if [[ "$sample_count" -gt 0 ]] 2>/dev/null; then
-            sample_count=$(( sample_count - 1 ))
-        fi
-
-        printf "  %-12s  %-10s  %-10s  %s\n" "$host" "$status" "${sample_count}" "ws-thru-switch"
-    done
-    echo ""
-}
-
-# ─── Collect ──────────────────────────────────────────────────────────
-do_collect() {
-    echo "Collecting results from all machines → ${COLLECT_DIR}/"
-    echo ""
-
-    mkdir -p "$COLLECT_DIR"
-
-    # Wire machine
-    host="$WIRE_SOURCE_MACHINE"
-    printf "  %-12s " "$host"
-    local_dir="$COLLECT_DIR/$host"
-    mkdir -p "$local_dir"
-    scp -q -o BatchMode=yes \
-        "${DEST_USER}@${host}:${DEPLOY_DIR}/collector_results/results_${host}.csv" \
-        "$local_dir/" 2>/dev/null \
-    && scp -q -o BatchMode=yes \
-        "${DEST_USER}@${host}:${DEPLOY_DIR}/collector_results/collection_summary_${host}.txt" \
-        "$local_dir/" 2>/dev/null \
-    && ok "collected" \
-    || warn "no results yet (is ${host} reachable from here?)"
-
-    # Switch machines
-    for host in "${SWITCH_MACHINES[@]}"; do
-        printf "  %-12s " "$host"
-        local_dir="$COLLECT_DIR/$host"
-        mkdir -p "$local_dir"
-        scp -q -o BatchMode=yes \
-            "${DEST_USER}@${host}:${DEPLOY_DIR}/collector_results/results_${host}.csv" \
-            "$local_dir/" 2>/dev/null \
-        && scp -q -o BatchMode=yes \
-            "${DEST_USER}@${host}:${DEPLOY_DIR}/collector_results/collection_summary_${host}.txt" \
-            "$local_dir/" 2>/dev/null \
-        && ok "collected" \
-        || warn "no results yet or scp failed"
-    done
-
-    # Merge all CSVs
-    echo ""
-    echo "Merging CSVs..."
-    COMBINED="$COLLECT_DIR/all_results.csv"
-    head_written=false
-
-    for host in "$WIRE_SOURCE_MACHINE" "${SWITCH_MACHINES[@]}"; do
-        csv="$COLLECT_DIR/$host/results_${host}.csv"
-        if [[ -f "$csv" ]]; then
-            if [[ "$head_written" == "false" ]]; then
-                cat "$csv" > "$COMBINED"
-                head_written=true
-            else
-                tail -n +2 "$csv" >> "$COMBINED"
-            fi
-        fi
-    done
-
-    if [[ -f "$COMBINED" ]]; then
-        total_rows=$(( $(wc -l < "$COMBINED") - 1 ))
-        ok "Combined CSV: $COMBINED ($total_rows samples)"
-    else
-        warn "No CSVs found to merge"
-    fi
-
-    echo ""
-    echo "Results ready for analysis:"
-    echo "  python3 analyze_week.py $COMBINED"
-}
-
-# ─── Main ─────────────────────────────────────────────────────────────
-case "${1:-help}" in
-    deploy)  do_deploy ;;
-    start)   do_start ;;
-    stop)    do_stop ;;
-    status)  do_status ;;
-    collect) do_collect ;;
-    *)
-        echo "Usage: $0 {deploy|start|stop|status|collect}"
-        echo ""
-        echo "Commands:"
-        echo "  deploy    Copy repo to switch machines"
-        echo "  start     Deploy + launch switch collectors + print wire instructions"
-        echo "  stop      Gracefully stop switch collectors"
-        echo "  status    Show running/stopped status and sample counts"
-        echo "  collect   Gather all CSVs (wire + switch) and merge"
-        echo ""
-        echo "First-time setup:"
-        echo "  python3 setup_wizard.py"
-        exit 1
-        ;;
-esac
