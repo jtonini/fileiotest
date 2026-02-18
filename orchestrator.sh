@@ -50,9 +50,9 @@ do_deploy() {
         printf "  %-12s " "$host"
         if ssh_cmd "$host" "mkdir -p ${DEPLOY_DIR}"; then
             scp -q -o BatchMode=yes \
-                "$SCRIPT_DIR"/{fileiotest.sh,randomfiles.py,collector.sh,parse_run.py,load_config.py,config.toml} \
+                "$SCRIPT_DIR"/{fileiotest.sh,randomfiles.py,collector.sh,parse_run.py,load_config.py,config.toml,launch_collector.sh} \
                 "${DEST_USER}@${host}:${DEPLOY_DIR}/" 2>/dev/null \
-            && ssh_cmd "$host" "chmod +x ${DEPLOY_DIR}/{fileiotest.sh,collector.sh,parse_run.py}" \
+            && ssh_cmd "$host" "chmod +x ${DEPLOY_DIR}/{fileiotest.sh,collector.sh,parse_run.py,launch_collector.sh}" \
             && ok "deployed" \
             || fail "scp failed"
         else
@@ -81,15 +81,9 @@ do_start() {
             continue
         fi
 
-        timeout 15 ssh -o ConnectTimeout=5 -o BatchMode=yes "${DEST_USER}@${host}" "
-            cd ${DEPLOY_DIR} && \
-            export NUM_FILES='${NUM_FILES}' INTERVAL_MIN='${INTERVAL_MIN}' \
-                   DURATION_HR='${DURATION_HR}' PING_COUNT='${PING_COUNT}' \
-                   SOURCE_LABEL='${host}' RESULTS_DIR='./collector_results' && \
-            PATH=.:/usr/local/bin:/usr/bin:/usr/sbin /usr/bin/nohup /usr/bin/bash ./collector.sh '${DEST}' \
-            /usr/bin/nohup /usr/bin/bash ./collector.sh '${DEST}' \
-                > ${DEPLOY_DIR}/collector_${host}.log 2>&1 </dev/null &
-        " >/dev/null 2>&1 \
+        timeout 15 ssh -o ConnectTimeout=5 -o BatchMode=yes "${DEST_USER}@${host}" \
+            "bash ${DEPLOY_DIR}/launch_collector.sh '${DEST}' '${host}' '${NUM_FILES}' '${INTERVAL_MIN}' '${DURATION_HR}' '${PING_COUNT}'" \
+            >/dev/null 2>&1 \
         && ok "started" \
           || fail "launch failed"
 
