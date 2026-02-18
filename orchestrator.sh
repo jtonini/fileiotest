@@ -81,7 +81,7 @@ do_start() {
             continue
         fi
 
-        ssh_cmd "$host" "
+        timeout 15 ssh -o ConnectTimeout=5 -o BatchMode=yes "${DEST_USER}@${host}" "
             cd ${DEPLOY_DIR} && \
             export NUM_FILES='${NUM_FILES}' INTERVAL_MIN='${INTERVAL_MIN}' \
                    DURATION_HR='${DURATION_HR}' PING_COUNT='${PING_COUNT}' \
