@@ -77,7 +77,7 @@ def parse_pv_line(line: str) -> dict:
     if m:
         result['bytes'] = m.group(1).strip('[]')
 
-    m = re.search(r'rate=\s*(\S+)', line)
+    m = re.search(r'rate=\s*(\[.*?\]|\S+)', line)
     if m:
         result['rate'] = m.group(1).strip('[]')
 
