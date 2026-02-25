@@ -11,6 +11,7 @@
 #
 # This collector adds:
 #   - Ping latency per sample
+#   - iperf3 raw bandwidth test per sample
 #   - Scheduling (run every N minutes for M hours)
 #   - CSV aggregation via parse_run.py
 #
@@ -55,10 +56,16 @@ SOURCE_LABEL="${SOURCE_LABEL:-$(hostname -s)}"
 INTERVAL_SEC=$(( INTERVAL_MIN * 60 ))
 TOTAL_SAMPLES=$(( (DURATION_HR * 60) / INTERVAL_MIN ))
 
+# iperf3 configuration
+IPERF3_PORT="${IPERF3_PORT:-5201}"
+IPERF3_DURATION="${IPERF3_DURATION:-10}"
+IPERF3_RETRIES="${IPERF3_RETRIES:-3}"
+
 # Find fileiotest.sh relative to this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FILEIOTEST="$SCRIPT_DIR/fileiotest.sh"
 PARSER="$SCRIPT_DIR/parse_run.py"
+IPERF_BIN="$SCRIPT_DIR/iperf3"
 
 if [[ ! -x "$FILEIOTEST" ]]; then
     echo "ERROR: fileiotest.sh not found or not executable at $FILEIOTEST"
@@ -91,6 +98,7 @@ Interval:           ${INTERVAL_MIN} minutes
 Duration:           ${DURATION_HR} hours
 Total samples:      $TOTAL_SAMPLES
 Ping count:         $PING_COUNT per sample
+iperf3:             ${IPERF3_DURATION}s test to port ${IPERF3_PORT}
 Results dir:        $RESULTS_DIR
 Kernel:             $(uname -r)
 EOF
@@ -103,6 +111,7 @@ echo "║  Source:         ${SOURCE_LABEL} → ${DEST}"
 echo "║  File counts:    ${FILE_COUNTS[*]}"
 echo "║  Interval:       every ${INTERVAL_MIN} min"
 echo "║  Duration:       ${DAYS} days ($TOTAL_SAMPLES samples)"
+echo "║  iperf3:         ${IPERF3_DURATION}s to port ${IPERF3_PORT}"
 echo "║  Results:        $CSV_FILE"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
@@ -136,6 +145,23 @@ while [[ $sample -lt $TOTAL_SAMPLES ]] && [[ "$RUNNING" == "true" ]]; do
     PINGLOG="$(cd "$RESULTS_DIR" && pwd)/logs/${SOURCE_LABEL}_ping_${SAFE_TS}.log"
     ping -c "$PING_COUNT" -q "$DEST_HOST" > "$PINGLOG" 2>&1 || true
 
+    # ── iperf3 bandwidth test ────────────────────────────────────────
+    IPERFLOG="$(cd "$RESULTS_DIR" && pwd)/logs/${SOURCE_LABEL}_iperf3_${SAFE_TS}.json"
+    if [[ -x "$IPERF_BIN" ]]; then
+        iperf_ok=false
+        for attempt in $(seq 1 "$IPERF3_RETRIES"); do
+            "$IPERF_BIN" -c "$DEST_HOST" -p "$IPERF3_PORT" -t "$IPERF3_DURATION" -J \
+                > "$IPERFLOG" 2>/dev/null && { iperf_ok=true; break; }
+            sleep $(( RANDOM % 10 + 5 ))
+        done
+        if [[ "$iperf_ok" == "false" ]]; then
+            echo '{}' > "$IPERFLOG"
+            echo "  ⚠ iperf3 failed after $IPERF3_RETRIES attempts"
+        fi
+    else
+        echo '{}' > "$IPERFLOG"
+    fi
+
     # ── Run the benchmark ────────────────────────────────────────────
     # fileiotest.sh now takes 3 args: numfiles, destination, stats-file
     # It handles remote cache clearing and TCP stats internally.
@@ -153,7 +179,7 @@ while [[ $sample -lt $TOTAL_SAMPLES ]] && [[ "$RUNNING" == "true" ]]; do
     # ── Parse and record ─────────────────────────────────────────────
     if [[ "$run_ok" == "true" ]]; then
         python3 "$PARSER" "$STATSFILE" "$TIMESTAMP" "$NUM" \
-            "$SOURCE_LABEL" "$PINGLOG" \
+            "$SOURCE_LABEL" "$PINGLOG" "$IPERFLOG" \
             >> "$CSV_FILE" 2>/dev/null \
             && echo "  ✓ Parsed → $CSV_FILE" \
             || echo "  ⚠ Parse warning — raw log at $LOGFILE"
