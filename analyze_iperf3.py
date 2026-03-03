@@ -427,44 +427,52 @@ def plot_01_per_machine_bars(df, outdir):
 
 
 def plot_02_overhead_waterfall(df, outdir):
-    """Overhead waterfall chart for wire and switch."""
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    """Overhead waterfall chart for wire and switch - shared y-axis."""
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
     phase_colors = [COLOR_IPERF3, COLOR_COLD, COLOR_HOT, COLOR_WRITE]
 
-    for ax, (conn, label) in zip(axes, [
+    global_max = 0
+    panel_data = []
+
+    for conn, label in [
         ('Direct Wire', 'Direct Wire (5G)'),
         ('University Switch', 'University Switch (mixed NICs)')
-    ]):
+    ]:
         m = df[df['connection'] == conn]
         if m.empty:
+            panel_data.append(None)
             continue
-
         iperf_med = m['iperf3_sender_mbps'].median()
         cold_med = m['cold_cache_mbps'].median()
         hot_med = m['hot_cache_avg_mbps'].median()
         write_med = m['true_write_mbps'].median()
-
-        categories = ['iperf3\n(raw)', 'Cold\ncache', 'Hot\ncache', 'True\nwrite']
         values = [iperf_med, cold_med, hot_med, write_med]
+        global_max = max(global_max, max(values))
+        panel_data.append((m, label, iperf_med, values))
 
+    y_max = global_max * 1.15
+
+    for ax, pdata in zip(axes, panel_data):
+        if pdata is None:
+            continue
+        m, label, iperf_med, values = pdata
+        categories = ['iperf3\n(raw)', 'Cold\ncache', 'Hot\ncache', 'True\nwrite']
         bars = ax.bar(categories, values, color=phase_colors, alpha=0.85,
                       edgecolor='white', linewidth=0.5)
-
         for i, val in enumerate(values):
             if i == 0:
-                ax.text(i, val + iperf_med * 0.02, f'{val:.0f}',
+                ax.text(i, val + y_max * 0.015, f'{val:.0f}',
                         ha='center', fontsize=10, fontweight='bold')
             else:
                 overhead = (1 - val / iperf_med) * 100
-                ax.text(i, val + iperf_med * 0.02,
+                ax.text(i, val + y_max * 0.015,
                         f'{val:.0f}\n({overhead:.0f}% loss)',
                         ha='center', fontsize=9)
-
         ax.axhline(y=iperf_med, color=COLOR_IPERF3, linestyle='--',
                    alpha=0.4, linewidth=1)
         ax.set_ylabel('Throughput (Mbit/s)')
         ax.set_title(f'{label}\n({len(m)} samples)')
-        ax.set_ylim(0, iperf_med * 1.2)
+        ax.set_ylim(0, y_max)
 
     fig.suptitle('Protocol Overhead: iperf3 (theoretical max) vs '
                  'fileiotest (real-world file transfer)',
@@ -473,7 +481,6 @@ def plot_02_overhead_waterfall(df, outdir):
     fig.savefig(os.path.join(outdir, '02_overhead_waterfall.png'))
     plt.close(fig)
     print("  Saved 02_overhead_waterfall.png")
-
 
 def plot_03_nic_tier_boxplots(df, outdir):
     """NIC tier boxplots with wire — all 4 metrics."""
@@ -1049,6 +1056,69 @@ def plot_10_same_machine_cdf(df_switch, df_wire, outdir):
     plt.close(fig)
     print(f"  Saved 10_same_machine_cdf.png")
 
+def plot_11_hourly_weekday_weekend(df, outdir):
+    """Throughput by hour of day - weekday vs weekend, all phases."""
+    phases = [
+        ('cold_cache_mbps', 'Cold-Cache\n(Mbit/s)'),
+        ('hot_cache_avg_mbps', 'Hot-Cache Avg\n(Mbit/s)'),
+        ('true_write_mbps', 'True Write\n(Mbit/s)'),
+    ]
+    available = [(c, l) for c, l in phases if c in df.columns]
+    if not available:
+        return
+
+    fig, axes = plt.subplots(len(available), 2,
+                             figsize=(16, 4.5 * len(available)),
+                             sharey='row')
+
+    hours = list(range(24))
+
+    for row, (col, ylabel) in enumerate(available):
+        for ci, (is_wkend, day_label) in enumerate([(False, 'Weekdays'),
+                                                     (True, 'Weekends')]):
+            ax = axes[row, ci] if len(available) > 1 else axes[ci]
+
+            for conn, color, fill_color in [
+                ('University Switch', COLOR_SWITCH, COLOR_SWITCH_LIGHT),
+                ('Direct Wire', COLOR_DIRECT, COLOR_DIRECT_LIGHT),
+            ]:
+                subset = df[(df['connection'] == conn) &
+                            (df['is_weekend'] == is_wkend)].copy()
+                if subset.empty:
+                    continue
+
+                subset['hour_bin'] = subset['timestamp'].dt.hour
+                grouped = subset.groupby('hour_bin')[col]
+
+                medians = grouped.median()
+                q25 = grouped.quantile(0.25)
+                q75 = grouped.quantile(0.75)
+
+                med_vals = [medians.get(h, np.nan) for h in hours]
+                q25_vals = [q25.get(h, np.nan) for h in hours]
+                q75_vals = [q75.get(h, np.nan) for h in hours]
+
+                ax.fill_between(hours, q25_vals, q75_vals,
+                                color=fill_color, alpha=0.3)
+                ax.plot(hours, med_vals, color=color, linewidth=2,
+                        marker='o', markersize=4, label=conn, zorder=3)
+
+            ax.set_xlabel('Hour of Day')
+            ax.set_ylabel(ylabel)
+            ax.set_xlim(-0.5, 23.5)
+            ax.set_xticks(range(0, 24, 3))
+            ax.set_xticklabels([f'{h:02d}' for h in range(0, 24, 3)])
+            ax.legend(fontsize=9, loc='upper left')
+
+            if row == 0:
+                ax.set_title(day_label, fontsize=12, fontweight='bold')
+
+    fig.suptitle('Throughput by Hour \u2014 Weekday vs Weekend (All Phases)',
+                 fontsize=13, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(os.path.join(outdir, '11_hourly_weekday_weekend.png'))
+    plt.close(fig)
+    print("  Saved 11_hourly_weekday_weekend.png")
 
 # ─── Main ─────────────────────────────────────────────────────────────
 
