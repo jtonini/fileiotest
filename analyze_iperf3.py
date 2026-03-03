@@ -830,6 +830,220 @@ def generate_all_plots(df, outdir):
     print(f"\n  All plots saved to: {outdir}/")
 
 
+# ─── Same-machine comparison: thais_switch vs thais_wire ──────────────
+
+def load_thais_switch(filepath):
+    """Load the pre-wire thais CSV (no iperf3 columns)."""
+    df = pd.read_csv(filepath, parse_dates=['timestamp'])
+
+    # Rename source for clarity
+    df['source'] = 'thais_switch'
+
+    # Time columns
+    df['hour'] = df['timestamp'].dt.hour + df['timestamp'].dt.minute / 60.0
+    df['day_of_week'] = df['timestamp'].dt.dayofweek
+    df['is_weekend'] = df['day_of_week'] >= 5
+
+    # Normalize rates
+    rate_cols = {
+        'cold_cache_rate': 'cold_cache_mbps',
+        'true_write_rate': 'true_write_mbps',
+        'hot_cache_run1_rate': 'hot_run1_mbps',
+        'hot_cache_run2_rate': 'hot_run2_mbps',
+        'hot_cache_run3_rate': 'hot_run3_mbps',
+    }
+    for src, dst in rate_cols.items():
+        if src in df.columns:
+            df[dst] = df[src].apply(normalize_rate)
+
+    hot_cols = ['hot_run1_mbps', 'hot_run2_mbps', 'hot_run3_mbps']
+    available_hot = [c for c in hot_cols if c in df.columns]
+    if available_hot:
+        df['hot_cache_avg_mbps'] = df[available_hot].mean(axis=1)
+
+    df['connection'] = 'University Switch'
+    df['nic_speed'] = 5000
+    df['nic_tier'] = '5G'
+
+    for col in ['ping_avg_ms', 'ping_min_ms', 'ping_max_ms', 'ping_mdev_ms',
+                'cold_cache_retrans', 'hot_cache_retrans', 'true_write_retrans']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    return df
+
+
+def thais_comparison_report(df_switch, df_wire):
+    """Text report: same machine, switch vs wire."""
+    print_separator("SAME-MACHINE COMPARISON: thais (switch) vs thais (wire)")
+    print(f"\n  Same hardware: 5G NIC, SSD, identical software")
+    print(f"  thais_switch: {len(df_switch)} samples "
+          f"({df_switch['timestamp'].min().date()} to "
+          f"{df_switch['timestamp'].max().date()})")
+    print(f"  thais_wire:   {len(df_wire)} samples "
+          f"({df_wire['timestamp'].min().date()} to "
+          f"{df_wire['timestamp'].max().date()})")
+
+    metrics = [
+        ('Cold cache', 'cold_cache_mbps'),
+        ('Hot cache (avg)', 'hot_cache_avg_mbps'),
+        ('True write', 'true_write_mbps'),
+        ('Ping (ms)', 'ping_avg_ms'),
+    ]
+
+    print(f"\n  {'Metric':<20} {'Switch Med':>12} {'Wire Med':>12} "
+          f"{'Ratio':>8} {'Delta':>12} {'p-value':>10} {'Cohen d':>10}")
+    print(f"  {'-' * 90}")
+
+    for name, col in metrics:
+        sw = df_switch[col].dropna()
+        wr = df_wire[col].dropna()
+        if len(sw) < 2 or len(wr) < 2:
+            continue
+        sw_med, wr_med = sw.median(), wr.median()
+        if name == 'Ping (ms)':
+            ratio = f'{wr_med/sw_med:.2f}x' if sw_med > 0 else '-'
+        else:
+            ratio = f'{wr_med/sw_med:.1f}x' if sw_med > 0 else '-'
+        delta = wr_med - sw_med
+        t_stat, p_val = scipy_stats.ttest_ind(wr, sw, equal_var=False)
+        d = cohens_d(wr, sw)
+        sig = '***' if p_val < 0.001 else '**' if p_val < 0.01 else '*' if p_val < 0.05 else 'ns'
+        print(f"  {name:<20} {sw_med:>12.0f} {wr_med:>12.0f} "
+              f"{ratio:>8} {delta:>+12.0f} {p_val:>9.1e} {d:>+9.2f} {sig}")
+
+    print(f"  {'-' * 90}")
+    print("  Rates in Mbit/s | Ratio = wire/switch")
+    print("  *** p<0.001, ** p<0.01, * p<0.05, ns = not significant")
+
+
+def plot_09_same_machine(df_switch, df_wire, outdir):
+    """Same-machine comparison: thais on switch vs wire."""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    metrics = [
+        ('Cold Cache', 'cold_cache_mbps', axes[0, 0]),
+        ('Hot Cache (avg)', 'hot_cache_avg_mbps', axes[0, 1]),
+        ('True Write', 'true_write_mbps', axes[1, 0]),
+        ('Ping Latency (ms)', 'ping_avg_ms', axes[1, 1]),
+    ]
+
+    for title, col, ax in metrics:
+        sw_vals = df_switch[col].dropna().values
+        wr_vals = df_wire[col].dropna().values
+
+        if len(sw_vals) == 0 or len(wr_vals) == 0:
+            continue
+
+        # Violin plots
+        if len(sw_vals) > 1:
+            vp = ax.violinplot([sw_vals], positions=[0.8], showmedians=False,
+                               showextrema=False)
+            for pc in vp['bodies']:
+                pc.set_facecolor(COLOR_SWITCH_LIGHT)
+                pc.set_edgecolor(COLOR_SWITCH)
+                pc.set_alpha(0.6)
+        if len(wr_vals) > 1:
+            vp = ax.violinplot([wr_vals], positions=[1.2], showmedians=False,
+                               showextrema=False)
+            for pc in vp['bodies']:
+                pc.set_facecolor(COLOR_DIRECT_LIGHT)
+                pc.set_edgecolor(COLOR_DIRECT)
+                pc.set_alpha(0.6)
+
+        # Box plots
+        box_data = [sw_vals, wr_vals]
+        box_pos = [0.8, 1.2]
+        bp = ax.boxplot(box_data, positions=box_pos, widths=0.15,
+                        patch_artist=True,
+                        medianprops=dict(color='black', linewidth=1.5),
+                        flierprops=dict(markersize=2))
+        bp['boxes'][0].set_facecolor(COLOR_SWITCH_LIGHT)
+        bp['boxes'][1].set_facecolor(COLOR_DIRECT_LIGHT)
+
+        # Median labels
+        sw_med = np.median(sw_vals)
+        wr_med = np.median(wr_vals)
+        if col != 'ping_avg_ms':
+            ratio = wr_med / sw_med if sw_med > 0 else 0
+            ax.text(1.0, max(wr_med, sw_med) * 1.05,
+                    f'{ratio:.1f}x', ha='center', fontsize=12,
+                    fontweight='bold', color='#333333')
+
+        ax.text(0.8, sw_med, f'  {sw_med:.0f}', va='center', fontsize=9,
+                fontweight='bold', color=COLOR_SWITCH, ha='left')
+        ax.text(1.2, wr_med, f'  {wr_med:.0f}', va='center', fontsize=9,
+                fontweight='bold', color=COLOR_DIRECT, ha='left')
+
+        ax.set_xticks([0.8, 1.2])
+        ax.set_xticklabels([f'Switch\n(n={len(sw_vals)})',
+                            f'Wire\n(n={len(wr_vals)})'], fontsize=10)
+        ax.set_xlim(0.4, 1.6)
+        ax.set_title(title)
+        if col == 'ping_avg_ms':
+            ax.set_ylabel('ms')
+        else:
+            ax.set_ylabel('Mbit/s')
+
+    fig.suptitle('Same Machine Comparison: thais\n'
+                 'Same 5G NIC, same SSD — only the network path differs',
+                 fontsize=13, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    path = os.path.join(outdir, '09_same_machine_comparison.png')
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"  Saved 09_same_machine_comparison.png")
+
+
+def plot_10_same_machine_cdf(df_switch, df_wire, outdir):
+    """CDF comparison for the same machine on switch vs wire."""
+    phases = [
+        ('Cold Cache', 'cold_cache_mbps'),
+        ('Hot Cache (avg)', 'hot_cache_avg_mbps'),
+        ('True Write', 'true_write_mbps'),
+    ]
+
+    fig, axes = plt.subplots(1, len(phases), figsize=(5.5 * len(phases), 5))
+
+    for ax, (title, col) in zip(axes, phases):
+        for label, data, color in [
+            ('Switch', df_switch, COLOR_SWITCH),
+            ('Wire', df_wire, COLOR_DIRECT),
+        ]:
+            vals = data[col].dropna().sort_values()
+            if len(vals) == 0:
+                continue
+            n = len(vals)
+            cdf = np.arange(1, n + 1) / n
+            ax.plot(vals.values, cdf, color=color, linewidth=2,
+                    label=f'{label} (n={n})')
+            for pct, marker, ms in [(0.50, 'o', 6), (0.95, 's', 6)]:
+                idx = int(pct * n) - 1
+                if 0 <= idx < n:
+                    ax.plot(vals.values[idx], pct, marker=marker,
+                            color=color, markersize=ms, zorder=5)
+
+        ax.set_xlabel(f'{title} (Mbit/s)')
+        ax.set_ylabel('Cumulative Probability')
+        ax.set_title(title)
+        for pct, plabel in [(0.50, '50th'), (0.95, '95th')]:
+            ax.axhline(pct, color='gray', linewidth=0.5, linestyle=':',
+                       alpha=0.5)
+            ax.text(ax.get_xlim()[0], pct + 0.01, plabel, fontsize=7,
+                    color='gray', alpha=0.7)
+        ax.set_ylim(0, 1.02)
+        ax.legend(fontsize=9)
+
+    fig.suptitle('Same Machine CDF: thais — Switch vs Wire\n'
+                 'Same 5G NIC, same SSD — only the network path differs',
+                 fontsize=13, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    path = os.path.join(outdir, '10_same_machine_cdf.png')
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"  Saved 10_same_machine_cdf.png")
+
+
 # ─── Main ─────────────────────────────────────────────────────────────
 
 def main():
@@ -838,6 +1052,9 @@ def main():
     parser.add_argument('csv', help='Path to all_results.csv')
     parser.add_argument('--outdir', default='analysis_iperf3',
                         help='Output directory for plots (default: analysis_iperf3)')
+    parser.add_argument('--thais-switch', default=None,
+                        help='Path to thais switch CSV (pre-wire data) for '
+                             'same-machine comparison')
     args = parser.parse_args()
 
     print("=" * 76)
@@ -869,6 +1086,21 @@ def main():
     weekday_vs_weekend(df)
 
     generate_all_plots(df, args.outdir)
+
+    # Same-machine comparison (separate from main analysis)
+    if args.thais_switch:
+        print(f"\nLoading thais switch data: {args.thais_switch}")
+        df_thais_sw = load_thais_switch(args.thais_switch)
+        df_thais_wr = df[df['source'] == WIRE_SOURCE].copy()
+        print(f"  thais_switch: {len(df_thais_sw)} samples")
+        print(f"  thais_wire:   {len(df_thais_wr)} samples")
+
+        thais_comparison_report(df_thais_sw, df_thais_wr)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            plot_09_same_machine(df_thais_sw, df_thais_wr, args.outdir)
+            plot_10_same_machine_cdf(df_thais_sw, df_thais_wr, args.outdir)
 
     print(f"\n{'=' * 76}")
     print(f"  Analysis complete. Plots in: {args.outdir}/")
