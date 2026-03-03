@@ -909,8 +909,12 @@ def thais_comparison_report(df_switch, df_wire):
         t_stat, p_val = scipy_stats.ttest_ind(wr, sw, equal_var=False)
         d = cohens_d(wr, sw)
         sig = '***' if p_val < 0.001 else '**' if p_val < 0.01 else '*' if p_val < 0.05 else 'ns'
-        print(f"  {name:<20} {sw_med:>12.0f} {wr_med:>12.0f} "
-              f"{ratio:>8} {delta:>+12.0f} {p_val:>9.1e} {d:>+9.2f} {sig}")
+        if name == 'Ping (ms)':
+            print(f"  {name:<20} {sw_med:>12.2f} {wr_med:>12.2f} "
+                  f"{ratio:>8} {delta:>+12.2f} {p_val:>9.1e} {d:>+9.2f} {sig}")
+        else:
+            print(f"  {name:<20} {sw_med:>12.0f} {wr_med:>12.0f} "
+                  f"{ratio:>8} {delta:>+12.0f} {p_val:>9.1e} {d:>+9.2f} {sig}")
 
     print(f"  {'-' * 90}")
     print("  Rates in Mbit/s | Ratio = wire/switch")
@@ -970,9 +974,11 @@ def plot_09_same_machine(df_switch, df_wire, outdir):
                     f'{ratio:.1f}x', ha='center', fontsize=12,
                     fontweight='bold', color='#333333')
 
-        ax.text(0.8, sw_med, f'  {sw_med:.0f}', va='center', fontsize=9,
+        ax.text(0.8, sw_med, f'  {sw_med:.2f}' if col == 'ping_avg_ms' else f'  {sw_med:.0f}',
+                va='center', fontsize=9,
                 fontweight='bold', color=COLOR_SWITCH, ha='left')
-        ax.text(1.2, wr_med, f'  {wr_med:.0f}', va='center', fontsize=9,
+        ax.text(1.2, wr_med, f'  {wr_med:.2f}' if col == 'ping_avg_ms' else f'  {wr_med:.0f}',
+                va='center', fontsize=9,
                 fontweight='bold', color=COLOR_DIRECT, ha='left')
 
         ax.set_xticks([0.8, 1.2])
