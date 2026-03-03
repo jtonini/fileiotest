@@ -834,6 +834,7 @@ def generate_all_plots(df, outdir):
         plot_06_retransmits(df, outdir)
         plot_07_ping_latency(df, outdir)
         plot_08_cdf_all_phases(df, outdir)
+        plot_11_hourly_weekday_weekend(df, outdir)
     print(f"\n  All plots saved to: {outdir}/")
 
 
