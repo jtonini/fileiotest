@@ -1,0 +1,66 @@
+# fileiotest configuration — sarahvaughan as destination
+# Tests: campus switch (141.166.222.28) and intranet (192.168.0.6)
+# Generated: 2026-04-10
+
+[destination]
+machine = "sarahvaughan"
+user = "root"
+campus_ip = "141.166.222.28"
+intranet_ip = "192.168.0.6"
+
+[source]
+# Campus switch machines → sarahvaughan (141.166.222.28)
+campus_machines = [
+    "aamy",
+    "alexis",
+    "boyi",
+    "camryn",
+    "cooper",
+    "hamilton",
+    "irene2",
+    "josh",
+    "justin",
+    "khanh",
+    "thais",
+]
+
+# Intranet machines → sarahvaughan (192.168.0.6)
+intranet_machines = [
+    "josh",
+    "mayer",
+    "justin",
+]
+
+user = "root"
+
+[nic_speeds]
+# Documented NIC speeds (Mbps) for each machine's campus interface
+# Used for analysis — knowing what the theoretical max is
+thais = 5000
+cooper = 5000
+hamilton = 5000
+camryn = 2500
+irene2 = 2500
+aamy = 1000
+alexis = 1000
+boyi = 1000
+josh = 1000
+justin = 1000
+khanh = 1000
+# Intranet NICs (all 1G on private switch)
+josh_intranet = 1000
+mayer_intranet = 1000
+justin_intranet = 1000
+# sarahvaughan NICs
+sarahvaughan_campus = 1000
+sarahvaughan_intranet = 1000
+
+[paths]
+deploy_dir = "~/fileiotest"
+results_dir = "./collector_results"
+
+[collection]
+num_files = "100"
+interval_min = 15
+duration_hr = 24
+ping_count = 20
