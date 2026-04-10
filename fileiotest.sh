@@ -234,7 +234,9 @@ nstat -a | egrep -i 'TcpRetransSegs|TCPTimeouts|OutRsts' >> $STATS_FILE
 ###############################################################################
 find . -type f -name '*.iotest' -print0 | xargs -0 vmtouch -t
 echo "=== 3 HOT-CACHE RUNS ===" | tee -a $STATS_FILE
-ssh $SSH_OPTS $DEST 'echo 3 | sudo tee /proc/sys/vm/drop_caches'
+if [ "$DEST_OS" == "linux" ]; then
+    ssh $SSH_OPTS $DEST 'echo 3 | sudo tee /proc/sys/vm/drop_caches' || true
+fi
 run_transfer
 cat pv.last >> $STATS_FILE
 echo "Zzzleeping for 60 seconds."
