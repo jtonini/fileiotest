@@ -21,7 +21,7 @@
 #   ./orchestrator_sarahvaughan.sh status          # check progress
 #   ./orchestrator_sarahvaughan.sh stop            # stop all collectors
 #   ./orchestrator_sarahvaughan.sh collect         # gather all CSVs to jonimitchell
-#   ./orchestrator_sarahvaughan.sh iperf-start     # start iperf3 daemon on sarahvaughan
+#   ./orchestrator_sarahvaughan.sh iperf-start     # start iperf3 daemons on sarahvaughan
 #   ./orchestrator_sarahvaughan.sh iperf-check     # check iperf3 on sarahvaughan
 
 set -euo pipefail
@@ -146,9 +146,10 @@ launch_one() {
     local dest="$2"
     local label="$3"
     local duration="${4:-$DURATION_HR}"
+    local iperf_port="${IPERF3_PORT:-5201}"
 
     # Check if already running
-    if ssh_cmd "$host" "pgrep -f 'collector_resumable.sh.*${dest}'" >/dev/null 2>&1; then
+    if ssh_cmd "$host" "pgrep -f 'collector_resumable.sh.*${label}'" >/dev/null 2>&1; then
         warn "${label} already running on ${host}"
         return 0
     fi
@@ -158,13 +159,14 @@ launch_one() {
          export SOURCE_LABEL='${label}' NUM_FILES='${NUM_FILES}' \
                 INTERVAL_MIN='${INTERVAL_MIN}' DURATION_HR='${duration}' \
                 PING_COUNT='${PING_COUNT}' RESULTS_DIR='./collector_results' \
+                IPERF3_PORT='${iperf_port}' \
                 PATH='${DEPLOY_DIR}:/usr/local/bin:/usr/bin:/usr/sbin:\$PATH' && \
          nohup bash ./collector_resumable.sh '${DEPLOY_USER}@${dest}' \
              > collector_${label}.log 2>&1 </dev/null &
         echo \$!"
     sleep 1
     if ssh_cmd "$host" "pgrep -f 'collector_resumable.sh.*${label}'" >/dev/null 2>&1; then
-        ok "${label} started on ${host}"
+        ok "${label} started on ${host} (port ${iperf_port})"
     else
         fail "${label} launch failed on ${host}"
     fi
@@ -220,7 +222,7 @@ do_sequential() {
 
         echo ""
         echo ">>> Starting ${label} (NIC: ${nic_speed}Mbps → SV campus: ${NIC_SPEEDS[sarahvaughan_campus]}Mbps)"
-        launch_one "$host" "$SARAHVAUGHAN_CAMPUS" "$label"
+        IPERF3_PORT=5201 launch_one "$host" "$SARAHVAUGHAN_CAMPUS" "$label"
         wait_for_collector "$host" "$label"
     done
 
@@ -234,7 +236,7 @@ do_sequential() {
 
         echo ""
         echo ">>> Starting ${label} (NIC: ${nic_speed}Mbps → SV intranet: ${NIC_SPEEDS[sarahvaughan_intranet]}Mbps)"
-        launch_one "$host" "$SARAHVAUGHAN_INTRANET" "$label"
+        IPERF3_PORT=5201 launch_one "$host" "$SARAHVAUGHAN_INTRANET" "$label"
         wait_for_collector "$host" "$label"
     done
 
@@ -249,6 +251,7 @@ do_sequential() {
 do_simultaneous() {
     echo "═══════════════════════════════════════════════════════════════"
     echo "  SIMULTANEOUS MODE: All machines at once, ${DURATION_HR}hr"
+    echo "  iperf3 ports: 5201-5214 (one per collector)"
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
 
@@ -259,24 +262,28 @@ do_simultaneous() {
     do_deploy
 
     echo "Launching all campus collectors..."
+    local port=5201
     for host in "${CAMPUS_MACHINES[@]}"; do
         local label="${host}_campus_simul"
-        printf "  %-12s " "$host"
-        launch_one "$host" "$SARAHVAUGHAN_CAMPUS" "$label"
+        printf "  %-12s (port %d) " "$host" "$port"
+        IPERF3_PORT="$port" launch_one "$host" "$SARAHVAUGHAN_CAMPUS" "$label"
+        port=$(( port + 1 ))
     done
 
     echo ""
     echo "Launching all intranet collectors..."
     for host in "${INTRANET_MACHINES[@]}"; do
         local label="${host}_intranet_simul"
-        printf "  %-12s " "$host"
-        launch_one "$host" "$SARAHVAUGHAN_INTRANET" "$label"
+        printf "  %-12s (port %d) " "$host" "$port"
+        IPERF3_PORT="$port" launch_one "$host" "$SARAHVAUGHAN_INTRANET" "$label"
+        port=$(( port + 1 ))
     done
 
     TOTAL_SAMPLES=$(( (DURATION_HR * 60) / INTERVAL_MIN ))
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
     echo "  All collectors launched. ${TOTAL_SAMPLES} samples over ${DURATION_HR}hr."
+    echo "  iperf3 ports: 5201-$(( port - 1 ))"
     echo "  Use '$0 status' to monitor progress."
     echo "  Use '$0 stop' to stop early."
     echo "  Use '$0 collect' to gather results when done."
@@ -422,15 +429,17 @@ do_collect() {
 
 # ─── iperf3 management on sarahvaughan ────────────────────────────────
 do_iperf_start() {
-    echo "Starting iperf3 daemon on sarahvaughan..."
+    echo "Starting iperf3 daemons on sarahvaughan (ports 5201-5214)..."
     ssh -o ConnectTimeout=5 root@sarahvaughan \
-        "pgrep iperf3 >/dev/null 2>&1 && echo 'Already running' || (nohup iperf3 -s -D && echo 'Started')"
+        "pkill iperf3 2>/dev/null; sleep 1; \
+         for port in \$(seq 5201 5214); do iperf3 -s -p \$port -D; done; \
+         echo \"Running:\"; sockstat -l | grep iperf | wc -l"
 }
 
 do_iperf_check() {
     echo "iperf3 on sarahvaughan:"
     ssh -o ConnectTimeout=5 root@sarahvaughan \
-        "sockstat -l | grep 5201 || echo 'NOT RUNNING'"
+        "sockstat -l | grep iperf || echo 'NOT RUNNING'"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────
@@ -453,7 +462,7 @@ case "${1:-help}" in
         echo "  status        Show running/stopped status and sample counts"
         echo "  stop          Gracefully stop all collectors"
         echo "  collect       Gather all CSVs to jonimitchell and merge"
-        echo "  iperf-start   Start iperf3 daemon on sarahvaughan"
+        echo "  iperf-start   Start iperf3 daemons on sarahvaughan (ports 5201-5214)"
         echo "  iperf-check   Check iperf3 status on sarahvaughan"
         echo ""
         echo "Machines:"
@@ -461,10 +470,11 @@ case "${1:-help}" in
         echo "  Intranet (→ ${SARAHVAUGHAN_INTRANET}): ${INTRANET_MACHINES[*]}"
         echo ""
         echo "Test plan:"
-        echo "  1. $0 deploy"
-        echo "  2. $0 sequential    # ~14 days for all machines"
-        echo "  3. $0 simultaneous  # 24hr contention test"
-        echo "  4. $0 collect       # merge all results"
+        echo "  1. $0 iperf-start   # start 14 iperf3 listeners"
+        echo "  2. $0 deploy"
+        echo "  3. $0 sequential    # ~14 days for all machines"
+        echo "  4. $0 simultaneous  # 24hr contention test"
+        echo "  5. $0 collect       # merge all results"
         exit 1
         ;;
 esac
