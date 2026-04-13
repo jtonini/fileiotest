@@ -182,12 +182,14 @@ while [[ $sample -lt $TOTAL_SAMPLES ]] && [[ "$RUNNING" == "true" ]]; do
     if [[ -x "$IPERF_BIN" ]] || command -v iperf3 >/dev/null 2>&1; then
         IPERF_CMD="${IPERF_BIN}"
         [[ -x "$IPERF_CMD" ]] || IPERF_CMD="iperf3"
+        # Stagger iperf3 start to avoid collisions in simultaneous mode
+        sleep $(( RANDOM % 45 ))
 
         iperf_ok=false
         for attempt in $(seq 1 "$IPERF3_RETRIES"); do
             "$IPERF_CMD" -c "$DEST_HOST" -p "$IPERF3_PORT" -t "$IPERF3_DURATION" -J \
                 > "$IPERFLOG" 2>/dev/null && { iperf_ok=true; break; }
-            sleep $(( RANDOM % 10 + 5 ))
+            sleep $(( RANDOM % 30 + 10 ))
         done
         if [[ "$iperf_ok" == "false" ]]; then
             echo '{}' > "$IPERFLOG"
