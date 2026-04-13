@@ -161,9 +161,13 @@ launch_one() {
                 PATH='${DEPLOY_DIR}:/usr/local/bin:/usr/bin:/usr/sbin:\$PATH' && \
          nohup bash ./collector_resumable.sh '${DEPLOY_USER}@${dest}' \
              > collector_${label}.log 2>&1 </dev/null &
-         echo \$!" \
-    && ok "${label} started on ${host}" \
-    || fail "${label} launch failed on ${host}"
+        echo \$!"
+    sleep 1
+    if ssh_cmd "$host" "pgrep -f 'collector_resumable.sh.*${label}'" >/dev/null 2>&1; then
+        ok "${label} started on ${host}"
+    else
+        fail "${label} launch failed on ${host}"
+    fi
 }
 
 # ─── Wait for a collector to finish ──────────────────────────────────
